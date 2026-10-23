@@ -1,0 +1,3 @@
+# Used by the Supabase CLI (`supabase functions deploy notify`).
+[functions.notify]
+verify_jwt = false

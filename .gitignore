@@ -1,0 +1,8 @@
+.DS_Store
+# Never commit spreadsheets or exports with members' data
+*.xlsx
+*.csv
+*.docx
+supabase/.temp/
+supabase/.branches/
+.env
