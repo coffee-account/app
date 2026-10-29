@@ -45,10 +45,10 @@ With no Supabase project configured in `web/config.js`, the site runs as a **dem
 To try it locally:
 
 ```bash
-cd web && python3 -m http.server 8000
+python3 serve.py
 ```
 
-Then open <http://localhost:8000>.
+Then open <http://localhost:8000>. Run it from the project folder. It serves `web/` and tells the browser not to cache, so every reload shows your latest changes. (A plain `python3 -m http.server` lets the browser keep old files, which can mix old and new code after an edit.)
 
 ---
 
@@ -57,7 +57,7 @@ Then open <http://localhost:8000>.
 ### 1. Supabase project
 
 1. Create a free account at <https://supabase.com>, then a new project. Choose region **Central EU (Frankfurt)** for GDPR.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it.
+2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (currently `20261029000000_info_refunds_issues.sql`: Info page, refunds, issue reports, advance payments). Each script only needs to run once per project.
 3. Under **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 
 ### 2. Email sending

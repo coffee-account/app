@@ -1,4 +1,5 @@
-import { html, useState, useLoad, Loading, Modal, fmtEUR, useBusy, downloadBlob, loadExcelJS } from "../lib/ui.js";
+import { html, useState, useLoad, Loading, Modal, fmtEUR, useBusy, downloadBlob, loadExcelJS, usePersisted } from "../lib/ui.js";
+import { Figures } from "../lib/drawings.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { computeLedger, personName, sortPeople } from "../lib/accounting.js";
@@ -17,14 +18,15 @@ const COLUMNS = [
 export function BalancesPage() {
   const app = useApp();
   const state = useLoad(() => api.loadLedgerData());
-  const [show, setShow] = useState("active");
-  const [sort, setSort] = useState(["balance", true]);
+  const [show, setShow] = usePersisted("balances.show", "active");
+  const [sort, setSort] = usePersisted("balances.sort", ["balance", true]);
+  const [q, setQ] = useState("");
   const [detail, setDetail] = useState(null);
   const [busy, run] = useBusy();
   const low = Number(app.settings.balance?.low_threshold ?? -10);
 
   return html`
-    <div class="page-head"><div><h1>Balances</h1><p>Starting balance + payments − (coffees and drinks at the price valid on each count date).</p></div>
+    <div class="page-head"><div><h1>Balances</h1><p>Starting balance plus payments, minus everything counted at the price of its date.</p></div>
       ${state.data && html`<div class="row">
         <button class="btn" disabled=${busy} onClick=${() => run(() => exportCsv(state.data))}>Export CSV</button>
         <button class="btn" disabled=${busy} onClick=${() => run(() => exportXlsx(state.data, app.settings))}>Export Excel</button></div>`}
@@ -32,12 +34,13 @@ export function BalancesPage() {
     <${Loading} state=${state}>${(data) => {
       const ledger = computeLedger(data);
       let rows = [...ledger.values()].filter((r) => {
+        if (q && !personName(r.person).toLowerCase().includes(q.toLowerCase())) return false;
         if (show === "active") return r.person.active_coffee || r.person.active_drinks;
         if (show === "low") return r.balance < low;
         if (show === "nonzero") return Math.abs(r.balance) >= 0.01;
         return true;
       });
-      const col = COLUMNS.find((c) => c[0] === sort[0]);
+      const col = COLUMNS.find((c) => c[0] === sort[0]) || COLUMNS[6];
       rows = sortPeople(rows.map((r) => ({ ...r.person, _r: r })), "group").map((p) => p._r);
       rows.sort((a, b) => {
         const x = col[2](a), y = col[2](b);
@@ -48,26 +51,30 @@ export function BalancesPage() {
       const sum = (f) => all.reduce((s, r) => s + f(r), 0);
       const lowCount = all.filter((r) => r.balance < low && (r.person.active_coffee || r.person.active_drinks)).length;
       return html`
-        <div class="grid cols-3" style="margin-bottom:6px">
-          <div class="card"><div class="stat-label">Sum of all balances</div><div class="stat">${fmtEUR(sum((r) => r.balance))}</div>
-            <div class="small muted">Positive = credit members hold</div></div>
-          <div class="card"><div class="stat-label">Paid in / consumed</div><div class="stat">${fmtEUR(sum((r) => r.paid))}</div>
-            <div class="small muted">${fmtEUR(sum((r) => r.coffeeCost + r.drinksCost))} consumed</div></div>
-          <div class="card"><div class="stat-label">Active people below ${fmtEUR(low)}</div><div class="stat ${lowCount ? "neg" : ""}">${lowCount}</div></div>
-        </div>
-        <div class="row" style="margin-bottom:10px">
-          <select style="max-width:240px" value=${show} onChange=${(e) => setShow(e.target.value)}>
+        <${Figures} items=${[
+          { label: "Sum of all balances", value: fmtEUR(sum((r) => r.balance)), tone: sum((r) => r.balance) < 0 ? "neg" : "pos", sub: "credit the members hold" },
+          { label: "Paid in", value: fmtEUR(sum((r) => r.paid)), sub: `${fmtEUR(sum((r) => r.coffeeCost + r.drinksCost))} consumed` },
+          { label: `Below ${fmtEUR(low)}`, value: lowCount, tone: lowCount ? "neg" : "", sub: "active people to remind" },
+        ]} />
+        <div class="toolbar">
+          <input data-search placeholder="Search name  /" aria-label="Search name" value=${q} onInput=${(e) => setQ(e.target.value)} />
+          <select value=${show} onChange=${(e) => setShow(e.target.value)} aria-label="Show">
             <option value="active">On a list</option><option value="low">Below ${fmtEUR(low)}</option>
             <option value="nonzero">Non-zero balance</option><option value="all">Everyone</option></select>
-          <span class="small muted">${rows.length} people · click a row for details</span>
+          <span class="count">${rows.length} of ${all.length} people · click a row for details</span>
         </div>
         <div class="table-wrap"><table class="data">
-          <thead><tr>${COLUMNS.map(([k, l, , num]) => html`<th class="sortable ${num ? "num" : ""}" aria-sort=${sort[0] === k ? (sort[1] ? "ascending" : "descending") : "none"}
+          <thead><tr>${COLUMNS.map(([k, l, , num]) => html`<th scope="col" class="sortable ${num ? "num" : ""}" aria-sort=${sort[0] === k ? (sort[1] ? "ascending" : "descending") : "none"}
             onClick=${() => setSort([k, sort[0] === k ? !sort[1] : true])}>${l}${sort[0] === k ? (sort[1] ? " ▲" : " ▼") : ""}</th>`)}</tr></thead>
-          <tbody>${rows.map((r) => html`<tr style="cursor:pointer" onClick=${() => setDetail(r)} class=${r.person.active_coffee || r.person.active_drinks ? "" : "inactive"}>
+          <tbody>${rows.map((r) => html`<tr style="cursor:pointer" tabindex="0" onClick=${() => setDetail(r)}
+              onKeyDown=${(e) => e.key === "Enter" && setDetail(r)} class=${r.person.active_coffee || r.person.active_drinks ? "" : "inactive"}>
             <td>${r.person.last_name}</td><td>${r.person.first_name}</td><td>${r.person.group_name || ""}</td>
-            <td class="num">${r.coffees}</td><td class="num">${r.drinks}</td><td class="num">${fmtEUR(r.paid)}</td>
-            <td class="num ${r.balance < low ? "neg" : r.balance < 0 ? "" : "pos"}"><b>${fmtEUR(r.balance)}</b></td></tr>`)}</tbody>
+            <td class="num ${r.coffees ? "" : "zero"}">${r.coffees}</td><td class="num ${r.drinks ? "" : "zero"}">${r.drinks}</td>
+            <td class="num ${r.paid ? "" : "zero"}">${fmtEUR(r.paid)}</td>
+            <td class="num ${r.balance < 0 ? "neg" : r.balance > 0 ? "pos" : "zero"}" style="font-weight:600">${fmtEUR(r.balance)}</td></tr>`)}</tbody>
+          <tfoot><tr><td colspan="3">Total (${rows.length})</td>
+            <td class="num">${rows.reduce((n, r) => n + r.coffees, 0)}</td><td class="num">${rows.reduce((n, r) => n + r.drinks, 0)}</td>
+            <td class="num">${fmtEUR(rows.reduce((n, r) => n + r.paid, 0))}</td><td class="num">${fmtEUR(rows.reduce((n, r) => n + r.balance, 0))}</td></tr></tfoot>
         </table></div>
         ${detail && html`<${DetailModal} row=${detail} label=${app.settings.balance?.starting_label} onClose=${() => setDetail(null)} />`}`;
     }}<//>`;
@@ -82,7 +89,7 @@ function DetailModal({ row, label, onClose }) {
       <tbody>
         <tr><td></td><td>${label || "Starting balance"}</td><td class="num">${fmtEUR(row.person.starting_balance)}</td><td class="num">${fmtEUR(row.person.starting_balance)}</td></tr>
         ${lines.map((e) => html`<tr><td>${fmtDate(e.date)}</td>
-          <td>${e.kind === "payment" ? `Payment${e.note ? ` (${e.note})` : ""}` : `${e.quantity} × ${e.kind} à ${fmtEUR(e.unit)}`}</td>
+          <td>${e.kind === "payment" ? `Payment${e.note ? ` (${e.note})` : ""}` : `${e.quantity} × ${e.kind} at ${fmtEUR(e.unit)}`}</td>
           <td class="num ${e.amount < 0 ? "neg" : "pos"}">${fmtEUR(e.amount)}</td><td class="num">${fmtEUR(e.after)}</td></tr>`)}
       </tbody>
     </table></div>

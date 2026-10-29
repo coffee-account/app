@@ -3,6 +3,13 @@ import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { computeLedger } from "../lib/accounting.js";
 import { fmtDate, isoDate, mondayOf, addDays, weekLabel } from "../lib/dates.js";
+import { Figures, DictEntry, EmptyState, LayeredCup, WeekCalendar } from "../lib/drawings.js";
+
+const hello = () => {
+  const h = new Date().getHours();
+  return h < 11 ? "Morning" : h < 17 ? "Hello" : "Evening";
+};
+const tone = (x) => (x < 0 ? "neg" : x > 0 ? "pos" : "");
 
 export function HomePage() {
   const app = useApp();
@@ -16,46 +23,50 @@ export function HomePage() {
   }, [person?.id]);
 
   if (!person) {
-    return html`<div class="page-head"><div><h1>Welcome</h1></div></div>
-      <div class="notice info">${app.profile.suggested_person_id
-        ? "Your account is waiting for an admin to connect it to your entry on the coffee/drinks list."
-        : "Your account is not connected to an entry on the coffee/drinks list yet. An admin will do this for you."}
-      Until then you cannot see a balance.</div>`;
+    return html`<div class="greeting"><div><h1>Welcome</h1>
+        <p class="lede">${app.profile.suggested_person_id
+          ? "Your account is waiting for an admin to connect it to your entry on the coffee list."
+          : "Your account isn't connected to an entry on the coffee list yet. An admin will do this for you."}
+        Until then there is no balance to show.</p></div></div>
+      <${EmptyState} drawing=${html`<${LayeredCup} size=${130} />`}>Your balance and history will appear here once your account is connected.<//>`;
   }
 
   const low = Number(settings.balance?.low_threshold ?? -10);
+  const lists = [person.active_coffee && "Coffee list", person.active_drinks && "Drinks list"].filter(Boolean).join(" · ") || "Not on any list";
   return html`
-    <div class="page-head"><div><h1>Hi ${person.first_name}</h1>
-      <p>${[person.active_coffee && "Coffee list", person.active_drinks && "Drinks list"].filter(Boolean).join(" · ") || "Not on any list"}</p></div></div>
+    <div class="greeting">
+      <div><h1>${hello()}, ${person.first_name}.</h1><p class="lede">${lists}</p></div>
+      <${DictEntry} word="mug·shot" pos="n.">The face you make when the pot is empty and it's your kitchen week.<//>
+    </div>
     <${Loading} state=${state}>${({ ledger, duties }) => html`
-      ${ledger.balance < low && html`<div class="notice bad"><b>Your balance is low.</b> Please top it up.</div>`}
-      <div class="grid cols-3">
-        <div class="card"><div class="stat-label">Balance</div>
-          <div class="stat ${ledger.balance < 0 ? "neg" : "pos"}">${fmtEUR(ledger.balance)}</div></div>
-        <div class="card"><div class="stat-label">Coffees / drinks</div>
-          <div class="stat">${ledger.coffees} / ${ledger.drinks}</div>
-          <div class="small muted">${fmtEUR(ledger.coffeeCost)} / ${fmtEUR(ledger.drinksCost)}</div></div>
-        <div class="card"><div class="stat-label">Paid in total</div><div class="stat">${fmtEUR(ledger.paid)}</div>
-          <div class="small muted">${settings.balance?.starting_label || "Starting balance"}: ${fmtEUR(person.starting_balance)}</div></div>
+      ${ledger.balance < low && html`<div class="notice bad">Your balance is below ${fmtEUR(low)}. Please top it up${settings.payment_info ? " (see below)" : ""}.</div>`}
+      <${Figures} items=${[
+        { label: "Balance", value: fmtEUR(ledger.balance), tone: tone(ledger.balance), sub: "after all counts and payments" },
+        { label: "Coffees", value: ledger.coffees, sub: fmtEUR(ledger.coffeeCost) },
+        { label: "Drinks", value: ledger.drinks, sub: fmtEUR(ledger.drinksCost) },
+        { label: "Paid in", value: fmtEUR(ledger.paid), sub: "all payments so far" },
+      ]} />
+      <div class="grid cols-2">
+        <div>
+          <h2>Kitchen duty</h2>
+          ${duties.length
+            ? html`<div class="table-wrap"><table class="data normal"><tbody>
+                ${duties.map((d) => html`<tr><td>${weekLabel(d.week_start)}</td><td class="muted">${d.note || ""}</td></tr>`)}
+              </tbody></table></div>`
+            : html`<${EmptyState} drawing=${html`<${WeekCalendar} size=${96} />`}
+                action=${html`<a class="btn" href="#/availability">Update availability</a>`}>No duty coming up.<//>`}
+        </div>
+        ${settings.payment_info && html`<div><h2>How to pay</h2>
+          <div class="card"><p style="white-space:pre-line;margin:0;font-family:var(--font-text);font-size:16px">${settings.payment_info}</p></div></div>`}
       </div>
-      ${settings.payment_info && html`<div class="card"><h3>How to pay</h3><p style="white-space:pre-line;margin:0">${settings.payment_info}</p></div>`}
-      <div class="card">
-        <h3>Your kitchen duty</h3>
-        ${duties.length
-          ? html`<ul style="margin:0;padding-left:18px">${duties.map((d) => html`<li>${weekLabel(d.week_start)}${d.note ? ` — ${d.note}` : ""}</li>`)}</ul>`
-          : html`<p class="muted" style="margin:0">No upcoming duty. <a href="#/availability">Update your availability</a>.</p>`}
-      </div>
-      <div class="card">
-        <h3>History</h3>
-        <div class="table-wrap"><table class="data">
-          <thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead>
-          <tbody>
-            ${[...ledger.entries].reverse().map((e) => html`<tr>
-              <td>${fmtDate(e.date)}</td>
-              <td>${e.kind === "payment" ? `Payment${e.note ? ` (${e.note})` : ""}` : `${e.quantity} × ${e.kind === "coffee" ? "coffee" : "drink"} à ${fmtEUR(e.unit)}`}</td>
-              <td class="num ${e.amount < 0 ? "neg" : "pos"}">${fmtEUR(e.amount)}</td></tr>`)}
-            <tr><td></td><td>${settings.balance?.starting_label || "Starting balance"}</td><td class="num">${fmtEUR(person.starting_balance)}</td></tr>
-          </tbody>
-        </table></div>
-      </div>`}<//>`;
+      <h2 class="section-title">History</h2>
+      <div class="table-wrap"><table class="data normal">
+        <thead><tr><th>Date</th><th>What</th><th class="num">Amount</th></tr></thead>
+        <tbody>
+          ${[...ledger.entries].reverse().map((e) => html`<tr>
+            <td>${fmtDate(e.date)}</td>
+            <td>${e.kind === "payment" ? `Payment${e.note ? ` (${e.note})` : ""}` : `${e.quantity} × ${e.kind === "coffee" ? "coffee" : "drink"} at ${fmtEUR(e.unit)}`}</td>
+            <td class="num ${tone(e.amount)}">${fmtEUR(e.amount)}</td></tr>`)}
+        </tbody>
+      </table></div>`}<//>`;
 }

@@ -1,6 +1,9 @@
-import { html, render, useState, useEffect, useCallback, Toasts, toastError, toast, Field, useBusy } from "./lib/ui.js";
+import { html, render, useState, useEffect, useCallback, Toasts, toastError, toast, Field, useBusy, Modal } from "./lib/ui.js";
+import { markdown } from "./lib/markdown.js";
+import { fmtDate } from "./lib/dates.js";
 import * as api from "./lib/api.js";
 import { AppContext } from "./lib/context.js";
+import { LayeredCup, DictEntry } from "./lib/drawings.js";
 import { availabilityRequired, missingAvailability, availabilityRules, personName } from "./lib/accounting.js";
 import { weeksFrom } from "./lib/dates.js";
 import { HomePage } from "./pages/home.js";
@@ -15,21 +18,32 @@ import { ListsPage } from "./pages/lists.js";
 import { AccountsPage } from "./pages/accounts.js";
 import { SettingsPage } from "./pages/settings.js";
 import { ImportPage } from "./pages/import.js";
+import { InfoPage } from "./pages/info.js";
+import { RefundsPage } from "./pages/refunds.js";
+import { IssuesPage } from "./pages/issues.js";
+import { PaypalPage } from "./pages/paypal.js";
 
 const ROUTES = [
-  { path: "", title: "My account", icon: "☕", page: HomePage, section: "Me", show: () => true },
-  { path: "availability", title: "My availability", icon: "🗓️", page: AvailabilityPage, section: "Me", show: (a) => !!a.person },
-  { path: "duties", title: "Kitchen duty", icon: "🧽", page: DutiesPage, section: "Me", show: () => true },
-  { path: "invoices", title: "Invoices", icon: "🧾", page: InvoicesPage, section: "Me", show: (a) => a.canUpload },
-  { path: "balances", title: "Balances", icon: "📊", page: BalancesPage, section: "Accounting", show: (a) => a.isAdmin },
-  { path: "counting", title: "Counting", icon: "✏️", page: CountingPage, section: "Accounting", show: (a) => a.isAdmin },
-  { path: "payments", title: "Payments", icon: "💶", page: PaymentsPage, section: "Accounting", show: (a) => a.isAdmin },
-  { path: "lists", title: "Print lists", icon: "🖨️", page: ListsPage, section: "Accounting", show: (a) => a.isAdmin },
-  { path: "people", title: "People", icon: "👥", page: PeoplePage, section: "Admin", show: (a) => a.isAdmin },
-  { path: "accounts", title: "Accounts & roles", icon: "🔑", page: AccountsPage, section: "Admin", show: (a) => a.isAdmin },
-  { path: "settings", title: "Settings", icon: "⚙️", page: SettingsPage, section: "Admin", show: (a) => a.isAdmin },
-  { path: "import", title: "Import spreadsheet", icon: "📥", page: ImportPage, section: "Admin", show: (a) => a.isAdmin },
+  { path: "info", title: "Updates & guide", page: InfoPage, section: "INFO", show: () => true },
+  { path: "", title: "My account", page: HomePage, section: "ME", show: () => true },
+  { path: "availability", title: "My availability", page: AvailabilityPage, section: "ME", show: (a) => !!a.person },
+  { path: "duties", title: "Kitchen duty", page: DutiesPage, section: "ME", show: () => true },
+  { path: "invoices", title: "Invoices", page: InvoicesPage, section: "ME", show: (a) => a.canUpload },
+  { path: "issues", title: "Report an issue", page: IssuesPage, section: "ME", show: () => true },
+  { path: "refunds", title: "Refunds", page: RefundsPage, section: "ME", show: (a) => !!a.person || a.isAdmin },
+  { path: "balances", title: "Balances", page: BalancesPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
+  { path: "counting", title: "Counting", page: CountingPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
+  { path: "payments", title: "Payments", page: PaymentsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
+  { path: "paypal", title: "PayPal import", page: PaypalPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
+  { path: "lists", title: "Print lists", page: ListsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
+  { path: "people", title: "People", page: PeoplePage, section: "ADMIN", show: (a) => a.isAdmin },
+  { path: "accounts", title: "Accounts & roles", page: AccountsPage, section: "ADMIN", show: (a) => a.isAdmin },
+  { path: "settings", title: "Settings", page: SettingsPage, section: "ADMIN", show: (a) => a.isAdmin },
+  { path: "import", title: "Import spreadsheet", page: ImportPage, section: "ADMIN", show: (a) => a.isAdmin },
 ];
+
+// Pages that stay reachable while someone still has to fill in their availability.
+const OPEN_WHEN_GATED = new Set(["availability", "info", "issues"]);
 
 const currentPath = () => location.hash.replace(/^#\/?/, "").split("?")[0];
 
@@ -75,10 +89,15 @@ function AuthScreen({ settings, groups }) {
     });
   };
 
-  return html`<div class="auth-wrap"><div class="card auth-card">
-    <div class="brand">☕ ${appName}</div>
-    <p class="muted small">Coffee & drinks accounting and kitchen duty.</p>
-    ${api.isDemo && html`<div class="notice info small"><b>Demo mode</b> — no database is configured, data stays in this browser.
+  return html`<div class="auth-wrap">
+    <div class="auth-poster">
+      <${LayeredCup} />
+      <h1>${appName}</h1>
+      <p class="lede">Balances, tally counts and kitchen duty for the coffee corner.</p>
+      <${DictEntry} word="caf·fein·ance" pos="n.">The fine art of knowing exactly how many coffees you owe, without ever having to ask.<//>
+    </div>
+    <div class="card auth-card">
+    ${api.isDemo && html`<div class="notice"><b>Demo mode.</b> No database is configured; data stays in this browser.
       <div class="row" style="margin-top:8px">
         <button class="btn small" onClick=${() => run(() => api.auth.signIn("ada@example.org", "x"))}>Sign in as admin</button>
         <button class="btn small" onClick=${() => run(() => api.auth.signIn("bob@example.org", "x"))}>Sign in as member</button>
@@ -114,8 +133,10 @@ function AuthScreen({ settings, groups }) {
 function SetPasswordScreen({ onDone }) {
   const [pw, setPw] = useState("");
   const [busy, run] = useBusy();
-  return html`<div class="auth-wrap"><div class="card auth-card">
-    <h1>Choose a new password</h1>
+  return html`<div class="auth-wrap">
+    <div class="auth-poster"><${LayeredCup} /><h1>New password</h1></div>
+    <div class="card auth-card">
+    <h2>Choose a new password</h2>
     <form class="grid" onSubmit=${(e) => { e.preventDefault(); run(async () => { await api.auth.setPassword(pw); toast("Password updated"); onDone(); }); }}>
       <${Field} label="New password"><input type="password" minlength="8" required value=${pw} onInput=${(e) => setPw(e.target.value)} autocomplete="new-password" /><//>
       <button class="btn primary" disabled=${busy}>Save password</button>
@@ -127,51 +148,111 @@ function SetPasswordScreen({ onDone }) {
 function Shell({ app }) {
   const path = useRoute();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [freshUpdates, setFreshUpdates] = useState(null); // new updates for people who skip the Info page
   const visible = ROUTES.filter((r) => r.show(app));
   const gated = app.availabilityMissing.length > 0;
-  let route = visible.find((r) => r.path === path) || visible[0];
-  if (gated && route.path !== "availability") route = ROUTES.find((r) => r.path === "availability");
+  let route = visible.find((r) => r.path === path) || visible.find((r) => r.path === "") || visible[0];
+  if (gated && !OPEN_WHEN_GATED.has(route.path)) route = ROUTES.find((r) => r.path === "availability");
   useEffect(() => setMenuOpen(false), [path]);
+  // Once per sign-in: open the Info page, or, for people who switched that off,
+  // show updates posted since their last visit in a pop-up.
+  useEffect(() => {
+    const key = `pc:info-shown:${app.user.id}`;
+    try { if (sessionStorage.getItem(key)) return; sessionStorage.setItem(key, "1"); } catch { /* storage unavailable */ }
+    if (!app.profile.skip_info) { if (currentPath() === "") location.hash = "#/info"; return; }
+    const seen = app.profile.updates_seen_at || app.profile.created_at || "";
+    api.listUpdates().then((ups) => {
+      const fresh = ups.filter((u) => u.created_at > seen && u.created_by !== app.user.id && (app.isAdmin || u.audience !== "admins"));
+      if (fresh.length) setFreshUpdates(fresh); // a pop-up instead of the full Info page
+    }).catch(() => { /* not important enough to interrupt sign-in */ });
+  }, []);
+  // "/" focuses the page's search field, Esc clears it.
+  useEffect(() => {
+    const onKey = (e) => {
+      const field = document.querySelector("input[data-search]");
+      if (!field) return;
+      const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName) || document.activeElement?.isContentEditable;
+      if (e.key === "/" && !typing) { e.preventDefault(); field.focus(); }
+      if (e.key === "Escape" && document.activeElement === field && field.value) {
+        field.value = "";
+        field.dispatchEvent(new Event("input", { bubbles: true }));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => { document.title = `${route.title} · ${app.settings.app_name || "Coffee & Drinks"}`; }, [route]);
 
   const sections = [...new Set(visible.map((r) => r.section))];
   const Page = route.page;
+  const appName = app.settings.app_name || "Coffee & Drinks";
+  const toggleTheme = () => {
+    const dark = document.documentElement.dataset.theme
+      ? document.documentElement.dataset.theme === "dark"
+      : matchMedia("(prefers-color-scheme: dark)").matches;
+    const next = dark ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem("theme", next); } catch { /* storage unavailable */ }
+  };
   return html`<div class="shell">
+    <div class="topbar">
+      <span class="brand">${appName}</span>
+      <button class="btn-text" aria-expanded=${menuOpen} onClick=${() => setMenuOpen(!menuOpen)}>${menuOpen ? "Close" : "Menu"}</button>
+    </div>
     <aside class="sidebar ${menuOpen ? "open" : ""}">
-      <div class="brand">☕ ${app.settings.app_name || "Coffee & Drinks"}</div>
-      ${api.isDemo && html`<div class="badge warn" style="margin:0 10px 6px">Demo mode</div>`}
-      <nav class="nav">
+      <div class="brand">${appName}</div>
+      ${api.isDemo && html`<div style="padding:0 10px 6px"><span class="badge warn">Demo mode</span></div>`}
+      <nav class="nav" aria-label="Main">
         ${sections.map((s) => html`<div class="nav-section">${s}</div>
           ${visible.filter((r) => r.section === s).map((r) => html`
-            <a href="#/${r.path}" class="${r === route ? "active" : ""} ${gated && r.path !== "availability" ? "locked" : ""}">
-              <span aria-hidden="true">${r.icon}</span>${r.title}</a>`)}`)}
+            <a href="#/${r.path}" class="${r === route ? "active" : ""} ${gated && !OPEN_WHEN_GATED.has(r.path) ? "locked" : ""}"
+              aria-current=${r === route ? "page" : undefined}>
+              ${r.title}${r.path === "availability" && gated && html`<span class="task-dot" title="Weeks missing"></span>`}</a>`)}`)}
       </nav>
       <div class="who">
         <div><b>${app.person ? personName(app.person) : app.profile.email}</b></div>
-        <div>${app.profile.email}</div>
-        <div class="row" style="margin-top:6px">
+        <div class="email">${app.profile.email}</div>
+        <div class="row">
           <span class="badge ${app.isAdmin ? "accent" : ""}">${app.isAdmin ? "Admin" : "Member"}</span>
           ${app.canManageDuties && !app.isAdmin && html`<span class="badge">Duty manager</span>`}
           ${app.canUpload && !app.isAdmin && html`<span class="badge">Invoices</span>`}
         </div>
-        <div class="row" style="margin-top:10px">
-          <button class="btn small" onClick=${() => api.auth.signOut().catch(toastError)}>Sign out</button>
-          ${api.isDemo && html`<button class="btn small ghost" onClick=${() => api.sb.resetDemo()}>Reset demo</button>`}
+        <div class="row" style="justify-content:space-between">
+          <span class="row" style="gap:12px">
+            <button class="btn-text" onClick=${() => api.auth.signOut().catch(toastError)}>Sign out</button>
+            ${api.isDemo && html`<button class="btn-text" onClick=${() => api.sb.resetDemo()}>Reset demo</button>`}
+          </span>
+          <button class="theme-toggle" aria-label="Switch light or dark mode" title="Light / dark" onClick=${toggleTheme}></button>
         </div>
       </div>
     </aside>
     <div>
-      <div class="topbar">
-        <button class="icon-btn" aria-label="Menu" onClick=${() => setMenuOpen(!menuOpen)}>☰</button>
-        <b>${route.title}</b>
-      </div>
       <main class="main">
-        ${gated && html`<div class="notice warn"><b>Availability required.</b> Please answer for every week below
-          (${app.availabilityMissing.length} missing) — the rest of the app unlocks once you are done.</div>`}
+        ${gated && html`<div class="notice warn">${`You haven't answered ${app.availabilityMissing.length} week${app.availabilityMissing.length > 1 ? "s" : ""} of kitchen-duty availability yet. The rest of the app opens once you have.`}</div>`}
         <${Page} key=${route.path} />
+        ${freshUpdates && html`<${NewUpdatesDialog} app=${app} updates=${freshUpdates} onClose=${() => setFreshUpdates(null)} />`}
       </main>
     </div>
   </div>`;
+}
+
+/** New updates since the last visit, for people who don't want the Info page at sign-in. */
+function NewUpdatesDialog({ app, updates, onClose }) {
+  const markSeen = () => api.updateProfile(app.user.id, { updates_seen_at: new Date().toISOString() }).catch(() => {});
+  const close = () => { markSeen(); onClose(); };
+  return html`<${Modal} title=${updates.length === 1 ? "New update" : `${updates.length} new updates`} onClose=${close}>
+    <div class="update-dialog">
+      ${updates.map((u) => html`<article class="update" key=${u.id}>
+        <div class="update-meta">${fmtDate(u.created_at.slice(0, 10))}${u.audience === "admins" && html`<span class="badge accent">admins only</span>`}</div>
+        <h3>${u.title}</h3>
+        ${u.body && html`<div class="prose" dangerouslySetInnerHTML=${{ __html: markdown(u.body) }}></div>`}
+      </article>`)}
+    </div>
+    <div class="row end" style="margin-top:16px;gap:16px">
+      <a class="btn-text" href="#/info" onClick=${close}>Open Info page</a>
+      <button class="btn primary" onClick=${close}>Got it</button>
+    </div>
+  <//>`;
 }
 
 function App() {
@@ -221,7 +302,13 @@ function App() {
     let loadedUid = null;
     const sub = api.auth.onChange((event, session) => {
       if (event === "PASSWORD_RECOVERY") setState({ phase: "recovery" });
-      else if (event === "SIGNED_OUT") { loadedUid = null; loadApp(null); }
+      else if (event === "SIGNED_OUT") {
+        loadedUid = null;
+        try { Object.keys(sessionStorage).filter((k) => k.startsWith("pc:info-shown:")).forEach((k) => sessionStorage.removeItem(k)); } catch { /* storage unavailable */ }
+        // The next sign-in starts from the beginning, not from the page the last person was on.
+        if (location.hash) history.replaceState(null, "", location.pathname + location.search);
+        loadApp(null);
+      }
       // supabase-js repeats SIGNED_IN on token refresh; only reload for a different user.
       else if (event === "SIGNED_IN" && session?.user.id !== loadedUid) { loadedUid = session.user.id; loadApp(session); }
     });

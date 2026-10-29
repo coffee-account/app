@@ -2,6 +2,7 @@ import { html, useState, Field, toast, useBusy, fmtEUR } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { parseWorkbook } from "../lib/xlsx-import.js";
+import { Figures } from "../lib/drawings.js";
 
 export function ImportPage() {
   const app = useApp();
@@ -43,13 +44,11 @@ export function ImportPage() {
       ${busy && !result && html`<p class="muted">Reading workbook…</p>`}
     </div>
     ${result && html`
-      <div class="grid cols-3">
-        <div class="card"><div class="stat-label">People</div><div class="stat">${result.summary.people}</div><div class="small muted">${result.summary.active} active, ${result.summary.groups} groups</div></div>
-        <div class="card"><div class="stat-label">Count sessions</div><div class="stat">${result.summary.coffeeSessions + result.summary.drinksSessions}</div>
-          <div class="small muted">${result.summary.coffeeSessions} coffee, ${result.summary.drinksSessions} drinks</div></div>
-        <div class="card"><div class="stat-label">Payments</div><div class="stat">${result.summary.payments}</div>
-          <div class="small muted">Prices: ${result.payload.prices.map((p) => `${p.kind} ${fmtEUR(p.price)}`).join(", ") || "defaults"}</div></div>
-      </div>
+      <${Figures} items=${[
+        { label: "People", value: result.summary.people, sub: `${result.summary.active} active, ${result.summary.groups} groups` },
+        { label: "Count sessions", value: result.summary.coffeeSessions + result.summary.drinksSessions, sub: `${result.summary.coffeeSessions} coffee, ${result.summary.drinksSessions} drinks` },
+        { label: "Payments", value: result.summary.payments, sub: `Prices: ${result.payload.prices.map((p) => `${p.kind} ${fmtEUR(p.price)}`).join(", ") || "defaults"}` },
+      ]} />
       <div class="card">
         <h2>Check before importing</h2>
         ${r.errors.map((e) => html`<div class="notice bad">${e}</div>`)}

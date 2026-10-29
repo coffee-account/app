@@ -3,6 +3,7 @@ import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { availabilityRules, availabilityRequired } from "../lib/accounting.js";
 import { weeksFrom, weekLabel } from "../lib/dates.js";
+import { StatusCup, FillLevel } from "../lib/drawings.js";
 
 export const STATUS = [
   ["available", "Available"],
@@ -41,35 +42,39 @@ export function AvailabilityPage() {
   });
 
   return html`
-    <div class="page-head"><div><h1>My availability for kitchen duty</h1>
+    <div class="page-head"><div><h1>My availability</h1>
       <p>${required
-        ? `Required: please keep the next ${weeksAhead} weeks filled in. You will get a reminder e-mail when weeks are missing.`
+        ? `Keep the next ${weeksAhead} weeks answered so kitchen duty can be planned fairly.`
         : "Optional for you, but it helps the duty managers plan."}</p></div></div>
     <${Loading} state=${state}>${() => html`
-      <div class="row" style="margin-bottom:12px">
-        <span class="small muted">Fill all empty weeks with:</span>
-        ${STATUS.map(([k, l]) => html`<button class="btn small" onClick=${() => setAll(k)}>${l}</button>`)}
+      <div class="toolbar">
+        <${FillLevel} value=${weeksAhead - missing.length} max=${weeksAhead} label="Weeks answered" />
+        <span class="spacer"></span>
+        <span class="small muted">Fill empty weeks with</span>
+        <div class="seg" role="group" aria-label="Fill all empty weeks">
+          ${STATUS.map(([k, l]) => html`<button onClick=${() => setAll(k)}><${StatusCup} state=${k} label="" />${l}</button>`)}
+        </div>
       </div>
       <div class="week-grid">
         ${weeks.map((w) => {
           const v = draft[w] || {};
           return html`<div class="week-row ${required && mandatoryWeeks.has(w) && !v.status ? "missing" : ""}">
             <div>
-              <div><b>${weekLabel(w)}</b></div>
+              <div><b>${weekLabel(w)}</b>${required && mandatoryWeeks.has(w) && !v.status && html` <span class="missing-word">not answered</span>`}</div>
               <input placeholder="Note (optional), e.g. only Mon–Wed" value=${v.note || ""} style="margin-top:6px"
                 onInput=${(e) => setWeek(w, { note: e.target.value })} />
             </div>
             <div class="seg" role="group" aria-label=${`Availability ${weekLabel(w)}`}>
-              ${STATUS.map(([k, l]) => html`<button class="${k} ${v.status === k ? "on" : ""}" aria-pressed=${v.status === k}
-                onClick=${() => setWeek(w, { status: k })}>${l}</button>`)}
+              ${STATUS.map(([k, l]) => html`<button class=${v.status === k ? "on" : ""} aria-pressed=${v.status === k}
+                onClick=${() => setWeek(w, { status: k })}>${v.status === k && html`<${StatusCup} state=${k} label="" />`}${l}</button>`)}
             </div>
           </div>`;
         })}
       </div>
       <div class="row" style="margin-top:14px">
-        <button class="btn" onClick=${() => setExtra(extra + 4)}>Show 4 more weeks</button>
+        <button class="btn-text" onClick=${() => setExtra(extra + 4)}>Show 4 more weeks</button>
         <span class="spacer"></span>
-        ${required && missing.length > 0 && html`<span class="badge warn">${missing.length} week${missing.length > 1 ? "s" : ""} missing</span>`}
+        ${required && missing.length > 0 && html`<span class="badge warn">${missing.length} week${missing.length > 1 ? "s" : ""} not answered</span>`}
         <button class="btn primary" disabled=${busy} onClick=${save}>Save availability</button>
       </div>`}<//>`;
 }

@@ -367,6 +367,12 @@ grant select, insert, update, delete on all tables in schema public to authentic
 revoke insert, delete on public.profiles from authenticated;
 revoke all on public.people_directory from anon;
 grant select on public.people_directory to authenticated;
+grant usage on all sequences in schema public to authenticated;
+-- Server-side code (the "notify" function). Newer projects no longer grant this automatically.
+grant usage on schema public to service_role;
+grant all on all tables in schema public to service_role;
+grant all on all sequences in schema public to service_role;
+grant execute on all functions in schema public to service_role;
 
 -- ───────────────────────── Invoice file storage ─────────────────────────
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)

@@ -16,6 +16,7 @@ const DEFAULT_SETTINGS = {
   duty: { people_per_week: 2, info: "Empty the dishwasher, wipe the counters, refill milk and coffee beans.", reminders: true },
   balance: { low_threshold: -10, starting_label: "Starting balance 19.1.2026" },
   payment_info: "Transfer to the PayPal account coffee@example.org and tell the accounting manager.",
+  notifications: { refund: "", issues: { milk: "kitchen@example.org", coffee: "", supplies: "", kitchen: "", machine: "", other: "", app: "" } },
 };
 
 function seed() {
@@ -78,6 +79,9 @@ function seed() {
       { id: 2, kind: "drinks", price: 1, valid_from: "2000-01-01" },
     ],
     count_sessions: sessions, counts, payments, list_templates: [], invoices: [], availability, duty_assignments,
+    updates: [{ id: uuid(), title: "Welcome to the new coffee app", body: "The paper lists stay as they are. Please register and fill in your kitchen-duty availability.", audience: "all", pinned: true, created_at: new Date().toISOString() }],
+    refund_requests: [],
+    issues: [{ id: uuid(), category: "milk", title: "Oat milk is empty", description: "Only one carton of normal milk left.", reporter_name: "Bob Member", status: "open", created_at: new Date().toISOString() }],
     files: {}, session: null,
   };
 }
@@ -86,6 +90,8 @@ const KEYS = {
   settings: ["key"], groups: ["name"], people: ["id"], profiles: ["id"], prices: ["kind", "valid_from"],
   count_sessions: ["id"], counts: ["session_id", "person_id"], payments: ["id"], list_templates: ["id"],
   invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"],
+  updates: ["id"], refund_requests: ["id"], issues: ["id"],
+  payer_aliases: ["id"], ignored_transactions: ["external_id"],
 };
 const DEFAULTS = {
   people: () => ({ id: uuid(), active_coffee: false, active_drinks: false, starting_balance: 0, created_at: new Date().toISOString() }),
@@ -95,11 +101,18 @@ const DEFAULTS = {
   invoices: () => ({ id: uuid(), status: "submitted", created_at: new Date().toISOString() }),
   duty_assignments: () => ({ id: uuid(), created_at: new Date().toISOString() }),
   prices: () => ({ id: Date.now() }),
+  updates: () => ({ id: uuid(), audience: "all", pinned: false, body: "", created_at: new Date().toISOString() }),
+  refund_requests: () => ({ id: uuid(), status: "open", leaving: true, created_at: new Date().toISOString() }),
+  issues: () => ({ id: uuid(), status: "open", created_at: new Date().toISOString() }),
+  payer_aliases: () => ({ id: uuid(), created_at: new Date().toISOString() }),
+  ignored_transactions: () => ({ created_at: new Date().toISOString() }),
 };
 
 class Store {
   constructor() {
     try { this.db = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch { this.db = seed(); }
+    // Demo data saved before newer features existed.
+    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions"]) this.db[t] ??= [];
     this.save();
   }
   save() { try { localStorage.setItem(KEY, JSON.stringify(this.db)); } catch { /* storage unavailable */ } }
@@ -124,7 +137,11 @@ class Query {
   }
   select() { return this; }
   insert(rows) { this.op = "insert"; this.payload = [].concat(rows); return this; }
-  upsert(rows, opts = {}) { this.op = "upsert"; this.payload = [].concat(rows); this.conflict = opts.onConflict?.split(",").map((s) => s.trim()); return this; }
+  upsert(rows, opts = {}) {
+    this.op = "upsert"; this.payload = [].concat(rows); this.conflict = opts.onConflict?.split(",").map((s) => s.trim());
+    this.ignoreDuplicates = !!opts.ignoreDuplicates;
+    return this;
+  }
   update(values) { this.op = "update"; this.payload = values; return this; }
   delete() { this.op = "delete"; return this; }
   eq(c, v) { this.filters.push((r) => r[c] === v); return this; }
@@ -159,7 +176,7 @@ class Query {
       const keys = this.conflict || KEYS[this.t];
       out = this.payload.map((p) => {
         const existing = this.op === "upsert" && rows.find((r) => keys.every((k) => r[k] === p[k]));
-        if (existing) { Object.assign(existing, p); return { ...existing }; }
+        if (existing) { if (!this.ignoreDuplicates) Object.assign(existing, p); return { ...existing }; }
         if (this.op === "insert" && KEYS[this.t].every((k) => p[k] !== undefined) && rows.find((r) => KEYS[this.t].every((k) => r[k] === p[k]))) {
           throw new Error("duplicate key value violates unique constraint");
         }
@@ -260,7 +277,7 @@ export function createDemoClient(notify) {
           const to = db.settings.find((s) => s.key === "reimbursement")?.value?.to;
           if (!to) return { data: null, error: { message: "No reimbursement e-mail address is configured (Settings)." } };
           inv.notified_at = new Date().toISOString();
-          msg = `Demo e-mail → ${to}: reimbursement request ${Number(inv.amount).toFixed(2)} € (${inv.supplier})`;
+          msg = `Demo e-mail → ${to}: ${inv.kind === "advance" ? "advance payment" : "reimbursement"} request ${Number(inv.amount).toFixed(2)} € (${inv.supplier})`;
         } else if (body.type === "duty_assigned") {
           const rows = db.duty_assignments.filter((a) => body.assignment_ids.includes(a.id));
           rows.forEach((a) => { a.notified_at = new Date().toISOString(); });
@@ -271,6 +288,17 @@ export function createDemoClient(notify) {
           msg = `Demo: invitation e-mail would be sent to ${who(body.person_id)?.email}`;
         } else if (body.type === "weekly") {
           msg = "Demo: weekly availability and duty reminders would be sent now";
+        } else if (body.type === "refund_requested") {
+          const r = db.refund_requests.find((x) => x.id === body.request_id);
+          if (r) r.notified_at = new Date().toISOString();
+          msg = `Demo e-mail → refund contact: refund request of ${Number(r?.amount || 0).toFixed(2)} €`;
+        } else if (body.type === "issue_reported") {
+          const it = db.issues.find((x) => x.id === body.issue_id);
+          if (it) it.notified_at = new Date().toISOString();
+          const to = db.settings.find((x) => x.key === "notifications")?.value?.issues?.[it?.category];
+          msg = `Demo e-mail → ${to || "all admins"}: ${it?.title}`;
+        } else if (body.type === "issue_resolved") {
+          msg = "Demo e-mail → reporter: issue resolved";
         }
         store.save();
         notify(msg);
@@ -278,6 +306,20 @@ export function createDemoClient(notify) {
       },
     },
     async rpc(name, args) {
+      if (name === "complete_refund") {
+        const db = store.db;
+        const r = db.refund_requests.find((x) => x.id === args.request_id);
+        if (!r || r.status !== "open") return { data: null, error: { message: "This request has already been handled" } };
+        if (Number(r.amount) > 0) db.payments.push({ ...DEFAULTS.payments(), person_id: r.person_id, paid_on: args.paid_on, amount: -Number(r.amount), method: "Refund", note: args.note || r.method, source: "refund" });
+        if (r.leaving) Object.assign(db.people.find((p) => p.id === r.person_id) || {}, { active_coffee: false, active_drinks: false });
+        if (r.successor_profile_id) {
+          Object.assign(db.profiles.find((p) => p.id === r.successor_profile_id) || {}, { role: "admin" });
+          if (r.leaving) Object.assign(db.profiles.find((p) => p.id === r.profile_id) || {}, { role: "member" });
+        }
+        Object.assign(r, { status: "paid", admin_note: args.note || null, processed_at: new Date().toISOString() });
+        store.save();
+        return { data: null, error: null };
+      }
       if (name !== "import_workbook") return { data: null, error: { message: `Unknown function ${name}` } };
       const db = store.db;
       const p = args.payload;

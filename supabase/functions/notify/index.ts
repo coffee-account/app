@@ -11,12 +11,24 @@
 //   duty_removed       { person_id, week_start } duty manager
 //   invite             { person_id }             admin
 //   weekly             {}                        cron or admin: availability + duty reminders
+//   refund_requested   { request_id }            the requester or admin
+//   issue_reported     { issue_id }              the reporter or admin
+//   issue_resolved     { issue_id }              duty manager: tells the reporter
 
-import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { escapeHtml, layout, sendMail } from "./mailer.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+// Newer projects get secret keys in SUPABASE_SECRET_KEYS; older ones the legacy service-role key.
+function serverKey(): string {
+  try {
+    const keys = JSON.parse(Deno.env.get("SUPABASE_SECRET_KEYS") ?? "{}");
+    const key = keys.default ?? Object.values(keys)[0];
+    if (typeof key === "string" && key) return key;
+  } catch { /* not set or not JSON */ }
+  return Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
+}
+const SERVICE_KEY = serverKey();
 const APP_URL = Deno.env.get("APP_URL") ?? "";
 const CRON_SECRET = Deno.env.get("CRON_SECRET") ?? "";
 const MAX_ATTACHMENT = 7 * 1024 * 1024;
@@ -52,7 +64,8 @@ async function identify(req: Request): Promise<Caller> {
   if (!token) throw new HttpError(401, "Not signed in");
   const { data, error } = await db.auth.getUser(token);
   if (error || !data.user) throw new HttpError(401, "Not signed in");
-  const { data: profile } = await db.from("profiles").select("*").eq("id", data.user.id).single();
+  const { data: profile, error: profileError } = await db.from("profiles").select("*").eq("id", data.user.id).maybeSingle();
+  if (profileError) throw new HttpError(500, `Could not read your profile: ${profileError.message}`);
   if (!profile) throw new HttpError(403, "No profile");
   return { kind: "user", id: data.user.id, email: data.user.email ?? "", profile };
 }
@@ -106,6 +119,22 @@ function weekLabel(weekStart: string): string {
 }
 
 // ── Handlers ──
+const addresses = (v: unknown) => String(v ?? "").split(/[,;\s]+/).filter((x) => x.includes("@"));
+
+async function adminEmails(): Promise<string[]> {
+  const { data } = await db.from("profiles").select("email").eq("role", "admin");
+  return (data ?? []).map((p) => p.email).filter(Boolean);
+}
+
+async function profileEmail(id: string | null): Promise<string | undefined> {
+  if (!id) return undefined;
+  const { data } = await db.from("profiles").select("email").eq("id", id).maybeSingle();
+  return data?.email ?? undefined;
+}
+
+const row = (k: string, v: unknown) =>
+  `<tr><td style="padding:4px 12px 4px 0;color:#7a716a;vertical-align:top">${k}</td><td style="padding:4px 0;white-space:pre-line">${escapeHtml(v)}</td></tr>`;
+
 async function invoiceSubmitted(caller: Caller, body: any, s: Record<string, any>) {
   const { data: inv } = await db.from("invoices").select("*").eq("id", body.invoice_id).single();
   if (!inv) throw new HttpError(404, "Invoice not found");
@@ -126,18 +155,19 @@ async function invoiceSubmitted(caller: Caller, body: any, s: Record<string, any
       if (file) attachments.push({ filename: inv.file_name ?? "invoice", content: new Uint8Array(await file.arrayBuffer()) });
     }
   }
-  const submitterEmail = caller.kind === "user" ? caller.email : undefined;
-  const row = (k: string, v: unknown) =>
-    `<tr><td style="padding:4px 12px 4px 0;color:#7a716a">${k}</td><td style="padding:4px 0">${escapeHtml(v)}</td></tr>`;
+  const submitterEmail = await profileEmail(inv.submitted_by);
   const amount = `${Number(inv.amount).toFixed(2)} €`;
+  const advance = inv.kind === "advance";
   const html = layout(
-    "Invoice submitted for reimbursement",
-    `<table style="border-collapse:collapse;font-size:14px">
-      ${row("Amount", amount)}${row("Invoice date", inv.invoice_date)}${row("Supplier", inv.supplier)}
-      ${row("Description", inv.description ?? "")}${row("Submitted by", `${inv.submitter_name ?? ""} ${submitterEmail ? `<${submitterEmail}>` : ""}`)}
-      ${row("Reimbursement details", inv.reimburse_note ?? "")}
+    advance ? "Advance payment requested" : "Invoice submitted for reimbursement",
+    `${advance ? `<p style="font-size:14px">${escapeHtml(inv.submitter_name ?? "Someone")} would like the money in advance for something they will buy for the kitchen.</p>` : ""}
+    <table style="border-collapse:collapse;font-size:14px">
+      ${row("Amount", amount)}${row(advance ? "Needed by" : "Invoice date", inv.invoice_date)}${row(advance ? "Where" : "Supplier", inv.supplier)}
+      ${row(advance ? "What for" : "Description", inv.description ?? "")}${row("Submitted by", `${inv.submitter_name ?? ""} ${submitterEmail ? `<${submitterEmail}>` : ""}`)}
+      ${row(advance ? "Pay to" : "Reimbursement details", inv.reimburse_note ?? "")}
     </table>
-    ${link ? `<p style="font-size:14px"><a href="${escapeHtml(link)}" style="color:#8a4b2a">Download the invoice</a> (link valid for 14 days)${attachments.length ? " — also attached." : ""}</p>` : ""}`,
+    ${link ? `<p style="font-size:14px"><a href="${escapeHtml(link)}" style="color:#8a4b2a">Download the ${advance ? "attached quote" : "invoice"}</a> (link valid for 14 days)${attachments.length ? " — also attached." : ""}</p>` : ""}
+    ${advance ? `<p style="font-size:14px">The receipt will follow once the purchase has been made.</p>` : ""}`,
     s.app_name ?? "Coffee & Drinks",
     APP_URL,
   );
@@ -146,7 +176,7 @@ async function invoiceSubmitted(caller: Caller, body: any, s: Record<string, any
       to,
       cc: cfg.cc_submitter && submitterEmail ? [submitterEmail] : [],
       replyTo: submitterEmail,
-      subject: `Reimbursement request: ${amount} – ${inv.supplier}`,
+      subject: `${advance ? "Advance payment request" : "Reimbursement request"}: ${amount} – ${inv.supplier}`,
       html,
       attachments,
     });
@@ -156,6 +186,89 @@ async function invoiceSubmitted(caller: Caller, body: any, s: Record<string, any
     await db.from("invoices").update({ notify_error: errMsg(e) }).eq("id", inv.id);
     throw e;
   }
+}
+
+async function refundRequested(caller: Caller, body: any, s: Record<string, any>) {
+  const { data: r } = await db.from("refund_requests").select("*").eq("id", body.request_id).single();
+  if (!r) throw new HttpError(404, "Refund request not found");
+  if (!isAdmin(caller) && (caller.kind !== "user" || r.profile_id !== caller.id)) throw new HttpError(403, "Not allowed");
+  const to = addresses(s.notifications?.refund);
+  const recipients = to.length ? to : await adminEmails();
+  const person = (await personEmails([r.person_id])).get(r.person_id);
+  const successor = r.successor_profile_id ? await profileEmail(r.successor_profile_id) : null;
+  const requesterEmail = await profileEmail(r.profile_id);
+  const leavingOnly = Number(r.amount) === 0;
+  const html = layout(
+    leavingOnly ? "Leaving the coffee lists" : "Refund requested",
+    `<table style="border-collapse:collapse;font-size:14px">
+      ${row("Person", `${person?.name ?? ""} <${requesterEmail ?? ""}>`)}${row("Amount", `${Number(r.amount).toFixed(2)} €`)}
+      ${row("How", r.method ?? "")}${row("Details", r.details ?? "")}
+      ${row("Leaving the lists", r.leaving ? "yes" : "no")}
+      ${successor ? row("Proposed successor as admin", successor) : ""}
+    </table>
+    <p style="font-size:14px">${leavingOnly ? "There is nothing to pay out. Confirm it" : "Pay it out, then mark it as paid"} under <a href="${escapeHtml(APP_URL)}#/refunds" style="color:#8a4b2a">Refunds</a>${leavingOnly ? " with “Mark as paid” to take them off the lists" : ""}.</p>`,
+    s.app_name ?? "Coffee & Drinks",
+    APP_URL,
+  );
+  try {
+    await sendMail({ to: recipients, replyTo: requesterEmail, subject: leavingOnly ? `Leaving: ${person?.name ?? ""}` : `Refund request: ${Number(r.amount).toFixed(2)} € – ${person?.name ?? ""}`, html });
+    await db.from("refund_requests").update({ notified_at: new Date().toISOString(), notify_error: null }).eq("id", r.id);
+    return { sent: recipients.length };
+  } catch (e) {
+    await db.from("refund_requests").update({ notify_error: errMsg(e) }).eq("id", r.id);
+    throw e;
+  }
+}
+
+const ISSUE_LABEL: Record<string, string> = {
+  milk: "Milk ran out", coffee: "Coffee beans ran out", supplies: "Other supplies ran out",
+  kitchen: "Kitchen not clean / tidy", machine: "Machine or equipment problem", other: "Other",
+  app: "App issue or suggestion",
+};
+
+async function issueReported(caller: Caller, body: any, s: Record<string, any>) {
+  const { data: it } = await db.from("issues").select("*").eq("id", body.issue_id).single();
+  if (!it) throw new HttpError(404, "Issue not found");
+  if (!isAdmin(caller) && (caller.kind !== "user" || it.reported_by !== caller.id)) throw new HttpError(403, "Not allowed");
+  const to = addresses(s.notifications?.issues?.[it.category]);
+  const recipients = to.length ? to : await adminEmails();
+  const reporterEmail = await profileEmail(it.reported_by);
+  const html = layout(
+    `Reported: ${ISSUE_LABEL[it.category] ?? it.category}`,
+    `<table style="border-collapse:collapse;font-size:14px">
+      ${row("What", it.title)}${it.description ? row("Details", it.description) : ""}${it.context ? row("Where", it.context) : ""}
+      ${row("Reported by", `${it.reporter_name ?? ""} ${reporterEmail ? `<${reporterEmail}>` : ""}`)}
+    </table>
+    <p style="font-size:14px"><a href="${escapeHtml(APP_URL)}#/issues" style="color:#8a4b2a">Open the issue list</a> to mark it as resolved.</p>`,
+    s.app_name ?? "Coffee & Drinks",
+    APP_URL,
+  );
+  try {
+    await sendMail({ to: recipients, replyTo: reporterEmail, subject: it.category === "app" ? `App issue or suggestion: ${it.title}` : `Kitchen: ${ISSUE_LABEL[it.category] ?? it.category} – ${it.title}`, html });
+    await db.from("issues").update({ notified_at: new Date().toISOString(), notify_error: null }).eq("id", it.id);
+    return { sent: recipients.length };
+  } catch (e) {
+    await db.from("issues").update({ notify_error: errMsg(e) }).eq("id", it.id);
+    throw e;
+  }
+}
+
+async function issueResolved(caller: Caller, body: any, s: Record<string, any>) {
+  if (!isDutyManager(caller)) throw new HttpError(403, "Not allowed");
+  const { data: it } = await db.from("issues").select("*").eq("id", body.issue_id).single();
+  const email = it && await profileEmail(it.reported_by);
+  if (!email) return { sent: false };
+  await sendMail({
+    to: [email],
+    subject: `Resolved: ${it.title}`,
+    html: layout(
+      "Thanks for reporting",
+      `<p style="font-size:14px">"${escapeHtml(it.title)}" has been marked as resolved.</p>${it.resolution ? `<p style="font-size:14px">${escapeHtml(it.resolution)}</p>` : ""}`,
+      s.app_name ?? "Coffee & Drinks",
+      APP_URL,
+    ),
+  });
+  return { sent: true };
 }
 
 async function dutyAssigned(caller: Caller, body: any, s: Record<string, any>) {
@@ -321,6 +434,9 @@ Deno.serve(async (req) => {
       case "duty_removed": return json(await dutyRemoved(caller, body, s));
       case "invite": return json(await invite(caller, body));
       case "weekly": return json(await weekly(caller, s));
+      case "refund_requested": return json(await refundRequested(caller, body, s));
+      case "issue_reported": return json(await issueReported(caller, body, s));
+      case "issue_resolved": return json(await issueResolved(caller, body, s));
       default: throw new HttpError(400, `Unknown type: ${body.type}`);
     }
   } catch (e) {

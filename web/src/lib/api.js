@@ -60,7 +60,16 @@ export async function savePerson(p) {
   delete row.id;
   return q(sb.from("people").insert(row).select().single());
 }
-export const deletePerson = (id) => q(sb.from("people").delete().eq("id", id));
+export async function deletePerson(id) {
+  try {
+    await q(sb.from("people").delete().eq("id", id));
+  } catch (e) {
+    if (/foreign key|violates|counts or payments/i.test(e.message)) {
+      throw new Error("This person has counts or payments, so they can't be deleted. Switch both lists off instead.");
+    }
+    throw e;
+  }
+}
 
 export const getMyProfile = (uid) => q(sb.from("profiles").select("*").eq("id", uid).maybeSingle());
 export const listProfiles = () => q(sb.from("profiles").select("*").order("email"));
@@ -198,4 +207,68 @@ async function errorMessage(err) {
     if (body?.error) return body.error;
   } catch { /* not JSON */ }
   return err.message || String(err);
+}
+
+// ── Updates (info page news) ──
+export const listUpdates = () => q(sb.from("updates").select("*").order("pinned", { ascending: false }).order("created_at", { ascending: false }));
+export async function saveUpdate(u, uid) {
+  const row = { title: u.title, body: u.body || "", audience: u.audience || "all", pinned: !!u.pinned };
+  if (u.id) return q(sb.from("updates").update(row).eq("id", u.id));
+  return q(sb.from("updates").insert({ ...row, created_by: uid }));
+}
+export const deleteUpdate = (id) => q(sb.from("updates").delete().eq("id", id));
+
+// ── Refunds ──
+export async function listRefunds(mineOnly, uid) {
+  let query = sb.from("refund_requests").select("*").order("created_at", { ascending: false });
+  if (mineOnly) query = query.eq("profile_id", uid);
+  return q(query);
+}
+export async function requestRefund(uid, row) {
+  const [r] = await q(sb.from("refund_requests").insert({ ...row, profile_id: uid }).select());
+  const res = await sb.functions.invoke("notify", { body: { type: "refund_requested", request_id: r.id } });
+  return { row: r, mailError: res.error ? await errorMessage(res.error) : null };
+}
+export const cancelRefund = (id) => q(sb.from("refund_requests").delete().eq("id", id));
+export const completeRefund = (id, paidOn, note) => q(sb.rpc("complete_refund", { request_id: id, paid_on: paidOn, note: note || null }));
+export const rejectRefund = (id, note) => q(sb.from("refund_requests").update({ status: "rejected", admin_note: note || null, processed_at: new Date().toISOString() }).eq("id", id));
+
+// ── Issues ──
+export const listIssues = () => q(sb.from("issues").select("*").order("created_at", { ascending: false }).limit(200));
+export async function reportIssue(uid, row) {
+  const [it] = await q(sb.from("issues").insert({ ...row, reported_by: uid }).select());
+  const res = await sb.functions.invoke("notify", { body: { type: "issue_reported", issue_id: it.id } });
+  return { row: it, mailError: res.error ? await errorMessage(res.error) : null };
+}
+export async function resolveIssue(uid, id, resolution, tellReporter) {
+  await q(sb.from("issues").update({ status: "resolved", resolution: resolution || null, resolved_by: uid, resolved_at: new Date().toISOString() }).eq("id", id));
+  if (tellReporter) await sb.functions.invoke("notify", { body: { type: "issue_resolved", issue_id: id } });
+}
+export const reopenIssue = (id) => q(sb.from("issues").update({ status: "open", resolution: null, resolved_by: null, resolved_at: null }).eq("id", id));
+export const deleteIssue = (id) => q(sb.from("issues").delete().eq("id", id));
+export async function resendIssue(id) {
+  const res = await sb.functions.invoke("notify", { body: { type: "issue_reported", issue_id: id } });
+  if (res.error) throw new Error(await errorMessage(res.error));
+}
+
+// ── PayPal import ──
+export const listAliases = () => q(sb.from("payer_aliases").select("*").order("value"));
+export const deleteAlias = (id) => q(sb.from("payer_aliases").delete().eq("id", id));
+export const listIgnored = () => q(sb.from("ignored_transactions").select("*"));
+export const unignore = (externalId) => q(sb.from("ignored_transactions").delete().eq("external_id", externalId));
+
+/**
+ * Books PayPal payments and remembers who they came from.
+ * payments: [{ person_id, paid_on, amount, external_id, payer, note }]; aliases: [{ person_id, kind, value }];
+ * ignored: [{ external_id, payer, amount, paid_on }]
+ */
+export async function importPaypal({ payments, aliases, ignored }) {
+  if (payments.length) {
+    await q(sb.from("payments").upsert(
+      payments.map((p) => ({ ...p, method: "PayPal", source: "paypal" })),
+      { onConflict: "external_id", ignoreDuplicates: true },
+    ));
+  }
+  if (aliases.length) await q(sb.from("payer_aliases").upsert(aliases, { onConflict: "kind,value" }));
+  if (ignored.length) await q(sb.from("ignored_transactions").upsert(ignored, { onConflict: "external_id", ignoreDuplicates: true }));
 }

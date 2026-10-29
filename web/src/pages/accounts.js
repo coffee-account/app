@@ -1,4 +1,4 @@
-import { html, useLoad, Loading, toast, useBusy } from "../lib/ui.js";
+import { html, useLoad, Loading, toast, useBusy, ConfirmAction } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { personName, sortPeople } from "../lib/accounting.js";
@@ -50,8 +50,7 @@ export function AccountsPage() {
             const admin = p.role === "admin";
             return html`<tr>
               <td>${p.email}${p.id === app.user.id && html` <span class="badge accent">you</span>`}</td>
-              <td>${person ? html`${personName(person)} <button class="btn small ghost" disabled=${busy}
-                  onClick=${() => confirm("Disconnect this account from the person?") && update(p, { person_id: null }, "Disconnected")}>Disconnect</button>`
+              <td>${person ? html`${personName(person)} <${ConfirmAction} label="Disconnect" question="Disconnect account?" disabled=${busy} onConfirm=${() => update(p, { person_id: null }, "Disconnected")} />`
                 : html`<${PersonSelect} free=${free} onPick=${(id) => update(p, { person_id: id }, "Connected")} />`}</td>
               <td><select style="width:auto" value=${p.role} disabled=${busy}
                 onChange=${(e) => (e.target.value === "admin" ? confirm(`Make ${p.email} an admin? Admins can see and change everything.`) : true)

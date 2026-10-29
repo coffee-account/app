@@ -1,9 +1,12 @@
 // Printable coffee / drinks lists: configuration, row building, pagination and .docx export.
 
 import { sortPeople } from "./accounting.js";
-import { isoWeek, isoDate } from "./dates.js";
+import { isoWeek, isoDate, mondayOf, parseDate } from "./dates.js";
 
 export const PAGE = { portrait: [210, 297], landscape: [297, 210] }; // mm
+
+const PAYPAL_ADDRESS = "ecker@cs.uni-goettingen.de";
+const LINK_BLUE = "#1f4e79"; // the blue swatch in the text editor
 
 export function defaultConfig(kind) {
   const base = {
@@ -12,28 +15,33 @@ export function defaultConfig(kind) {
     datePosition: "header", // "header" (top right of every page) | "title" | "none"
     dateSize: 10,
     // Rich text: a list of runs { text, color } — color null means black. "\n" starts a new line.
-    intro: toRuns(kind === "coffee"
-      ? "If you want to sign up for coffee, you first need to transfer a starting credit of 20 euro to the PayPal account: ecker@cs.uni-goettingen.de\nYou also need to undertake kitchen duties (see rules on the left)."
-      : "If you want to sign up for drinks, you first need to transfer a starting credit of 20 euro to the PayPal account: ecker@cs.uni-goettingen.de"),
+    intro: toRuns([
+      { text: `If you want to sign up for ${kind === "coffee" ? "coffee" : "drinks"}, you first need to transfer a starting credit of 20 euro to the PayPal account:\n` },
+      { text: PAYPAL_ADDRESS, color: LINK_BLUE },
+      ...(kind === "coffee" ? [{ text: "\nYou also need to undertake kitchen duties (see rules on the left)." }] : []),
+    ]),
     introSize: 10,
-    introAlign: "left",
+    introAlign: "center",
     footer: toRuns(kind === "coffee"
       ? "Please put a mark for every drink. One coffee costs 40 ct.\nPlease only put 5 marks per cell to facilitate counting. Thank you!"
       : "Please put a mark for every drink. One drink costs 1€.\nPlease put only 5 marks per cell to facilitate counting and write new entries readable! Thank you!"),
     footerSize: 9,
     footerAlign: "center",
     orientation: "portrait",
-    margins: { top: 12, side: 8, bottom: 10 },
+    margins: { top: 12, side: 12, bottom: 12 },
     fontSize: 10,
     headerSize: 12,
-    rowHeight: 5.8,
+    rowHeight: 7, // the guide asks for writing fields of at least 7 mm
+    headerTint: 10, // % grey of the table header row
+    fiveLines: true, // heavier line after every fifth person, so people stay in their row
+    wordArial: false, // use Arial in the Word file instead of the Playfulcrema fonts
     sortBy: "group",
     showGroup: true,
     shading: "none", // "none" | "people" (alternate people) | "groups" (alternate groups)
     shadeLevel: 12, // % grey of the shaded band
-    nameWidths: { last: 34, first: 22, group: 26 },
+    nameWidths: { last: 29, first: 27, group: 26 },
     tally: { start: 5, step: 5, count: 12, width: 0 },
-    extraColumns: kind === "coffee" ? [{ label: "Kitchen duties", width: 20, fill: "blank" }] : [],
+    extraColumns: kind === "coffee" ? [{ label: "Kitchen duties", width: 26, fill: "duties" }] : [],
     blankRows: 8,
     excluded: [],
     included: [],
@@ -50,6 +58,10 @@ export function normalizeConfig(kind, cfg) {
   const legacy = {};
   if (cfg && "showDate" in cfg && !("datePosition" in cfg)) legacy.datePosition = cfg.showDate ? "title" : "none";
   if (cfg?.zebra && !("shading" in cfg)) legacy.shading = "people";
+  // Values still at the pre-Playfulcrema defaults move to the guide's print format; customised ones stay.
+  if (cfg && Number(cfg.rowHeight) === 5.8) legacy.rowHeight = d.rowHeight;
+  const oldNames = cfg?.nameWidths && cfg.nameWidths.last === 34 && cfg.nameWidths.first === 22;
+  const oldMargins = cfg?.margins && cfg.margins.top === 12 && cfg.margins.side === 8 && cfg.margins.bottom === 10;
   // Plain-text intro/footer with one paragraph colour → runs.
   if (cfg && "intro" in cfg) legacy.intro = toRuns(cfg.intro, cfg.introColor);
   if (cfg && "footer" in cfg) legacy.footer = toRuns(cfg.footer, cfg.footerColor);
@@ -57,10 +69,12 @@ export function normalizeConfig(kind, cfg) {
   return {
     ...d, ...rest, ...legacy,
     rowsPerPerson: cfg?.rowsPerPerson ?? {},
-    margins: { ...d.margins, ...cfg?.margins },
-    nameWidths: { ...d.nameWidths, ...cfg?.nameWidths },
+    margins: oldMargins ? d.margins : { ...d.margins, ...cfg?.margins },
+    nameWidths: oldNames ? d.nameWidths : { ...d.nameWidths, ...cfg?.nameWidths },
     tally: { ...d.tally, ...cfg?.tally },
-    extraColumns: cfg?.extraColumns ?? d.extraColumns,
+    extraColumns: (cfg?.extraColumns ?? d.extraColumns).map((c) =>
+      // The original "Kitchen duties" column (20 mm, left blank) becomes the wider one with assigned weeks.
+      (c.label === "Kitchen duties" && Number(c.width) === 20 && c.fill !== "duties" ? { ...c, width: 26, fill: "duties" } : c)),
     excluded: cfg?.excluded ?? [],
     included: cfg?.included ?? [],
   };
@@ -124,11 +138,22 @@ export function columns(cfg) {
   return [...cols, ...tallies, ...extras];
 }
 
-/** Text for the "duties" extra column: the weeks a person is assigned from `fromDate` on. */
+const dutyDate = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+
+/**
+ * Text for the "duties" extra column: assigned weeks from the list date's week on,
+ * one per line ("W44 (26 Oct)"); at most two lines, "…" when there are more.
+ */
 function dutyText(personId, duties, fromDate) {
-  return duties.filter((d) => d.person_id === personId && d.week_start >= fromDate)
-    .map((d) => `W${isoWeek(d.week_start)}`).slice(0, 4).join(", ");
+  const from = mondayOf(fromDate);
+  const weeks = duties.filter((d) => d.person_id === personId && d.week_start >= from)
+    .sort((a, b) => a.week_start.localeCompare(b.week_start))
+    .map((d) => `W${isoWeek(d.week_start)} (${dutyDate.format(parseDate(d.week_start))})`);
+  return weeks.length > 2 ? `${weeks[0]}\n${weeks[1]} …` : weeks.join("\n");
 }
+
+/** Duty cells use a smaller font so two weeks fit in one row. */
+export const dutyFontSize = (cfg) => Math.max(6, Math.round(cfg.fontSize * 0.8 * 2) / 2);
 
 /**
  * Table rows. A person may span several rows: their name/group/extra cells are on the first row
@@ -162,7 +187,22 @@ export function buildRows(kind, people, cfg, duties = [], fromDate = isoDate()) 
     if (cfg.shading === "people") band = 1 - band;
     rows.push({ cells: cols.map(() => ""), span: 1, cont: false, band: cfg.shading === "people" ? band : 0 });
   }
+  // Mark the last row of every fifth person (empty rows count as one person each).
+  if (cfg.fiveLines) {
+    let n = 0;
+    rows.forEach((r, i) => {
+      if (!r.cont) n++;
+      if (n % 5 === 0 && !rows[i + 1]?.cont) r.fiveEnd = true;
+    });
+  }
   return { cols, rows };
+}
+
+export const PRINT_FONTS = { title: "Fraunces", text: "Newsreader", data: "Schibsted Grotesk" };
+
+export function headerTintColor(cfg) {
+  const v = Math.round(255 * (1 - Math.max(0, Math.min(30, Number(cfg.headerTint) || 0)) / 100));
+  return `#${v.toString(16).padStart(2, "0").repeat(3)}`;
 }
 
 export function shadeColor(cfg) {
@@ -184,7 +224,10 @@ export function paginate(cfg, rows) {
   const footer = runsText(cfg.footer);
   const textH = lines(intro, cfg.introSize, introW) * cfg.introSize * pt * 1.5 + (intro ? 3 : 0);
   const imgH = cfg.image ? (cfg.image.heightMm || 0) : 0;
-  const headH = Math.max(cfg.rowHeight, cfg.headerSize * pt * 1.4) + 0.5;
+  // Header labels may wrap (e.g. "Kitchen duties" in a narrow column); bold glyphs ~0.62 em wide.
+  const headLines = Math.max(1, ...columns(cfg).filter((c) => !c.tally)
+    .map((c) => Math.ceil((c.label.length * cfg.headerSize * pt * 0.62) / Math.max(1, c.width - 2.4))));
+  const headH = Math.max(cfg.rowHeight, headLines * cfg.headerSize * pt * 1.15 + 1.2) + 0.5;
   const footerH = lines(footer, cfg.footerSize, usable) * cfg.footerSize * pt * 1.5 + (footer ? 4 : 0);
   const body = pageH - cfg.margins.top - cfg.margins.bottom;
   // Rows of one person stay on the same page.
@@ -221,22 +264,28 @@ export async function exportDocx(kind, cfg, cols, rows, date) {
   const d = await import("docx");
   const mm = (x) => Math.round(x * 56.6929); // twips
   const [pw, ph] = PAGE.portrait; // docx swaps these itself for landscape
-  const border = { style: d.BorderStyle.SINGLE, size: 4, color: "000000" };
-  const borders = { top: border, bottom: border, left: border, right: border };
+  // Border sizes are in eighths of a point: 0.5 pt grid, 1 pt every five rows, 1.5 pt under the header.
+  const line = (eighths) => ({ style: d.BorderStyle.SINGLE, size: eighths, color: "000000" });
+  const font = cfg.wordArial ? { title: "Arial", text: "Arial", data: "Arial" } : PRINT_FONTS;
+  const headFill = headerTintColor(cfg).slice(1).toUpperCase();
   const shade = shadeColor(cfg).slice(1).toUpperCase();
   const align = { left: d.AlignmentType.LEFT, center: d.AlignmentType.CENTER, right: d.AlignmentType.RIGHT };
   const cell = (text, c, head, row = {}) => new d.TableCell({
     width: { size: mm(c.width), type: d.WidthType.DXA },
-    borders,
-    shading: row.band ? { type: d.ShadingType.CLEAR, fill: shade, color: "auto" } : undefined,
+    borders: { top: line(4), left: line(4), right: line(4), bottom: line(head ? 12 : row.fiveEnd ? 8 : 4) },
+    shading: head && Number(cfg.headerTint) > 0 ? { type: d.ShadingType.CLEAR, fill: headFill, color: "auto" }
+      : row.band ? { type: d.ShadingType.CLEAR, fill: shade, color: "auto" } : undefined,
     verticalMerge: c.tally || head ? undefined : row.cont ? d.VerticalMergeType.CONTINUE : row.span > 1 ? d.VerticalMergeType.RESTART : undefined,
-    margins: { left: mm(1), right: mm(1) },
+    margins: c.tally ? { left: 0, right: 0 } : { left: mm(1), right: mm(1) },
     verticalAlign: d.VerticalAlign.CENTER,
-    children: [new d.Paragraph({
+    children: String(text ?? "").split("\n").map((part) => new d.Paragraph({
       keepNext: row.keepNext,
       alignment: head && c.tally ? d.AlignmentType.CENTER : d.AlignmentType.LEFT,
-      children: [new d.TextRun({ text: String(text ?? ""), bold: head, size: (head ? cfg.headerSize : cfg.fontSize) * 2, font: "Arial" })],
-    })],
+      children: [new d.TextRun({
+        text: part, bold: head, font: font.data,
+        size: (head ? cfg.headerSize : c.fill === "duties" ? dutyFontSize(cfg) : cfg.fontSize) * 2,
+      })],
+    })),
   });
   const height = { value: mm(cfg.rowHeight), rule: d.HeightRule.ATLEAST };
   const table = new d.Table({
@@ -251,9 +300,9 @@ export async function exportDocx(kind, cfg, cols, rows, date) {
       }),
     ],
   });
-  const para = (text, size, opts = {}) => runLines(text).map((line) => new d.Paragraph({
+  const para = (text, size, opts = {}) => runLines(text).map((ln) => new d.Paragraph({
     alignment: opts.align, spacing: { after: opts.after ?? 0 },
-    children: line.map((r) => new d.TextRun({ text: r.text, size: size * 2, bold: opts.bold, color: r.color?.replace("#", ""), font: "Arial" })),
+    children: ln.map((r) => new d.TextRun({ text: r.text, size: size * 2, bold: opts.bold, color: r.color?.replace("#", ""), font: opts.font || font.text })),
   }));
 
   const head = [];
@@ -274,13 +323,13 @@ export async function exportDocx(kind, cfg, cols, rows, date) {
   if (listTitle(cfg, date) || floating.length) {
     head.push(new d.Paragraph({
       alignment: d.AlignmentType.CENTER, spacing: { after: 80 },
-      children: [...floating, new d.TextRun({ text: listTitle(cfg, date), size: cfg.titleSize * 2, bold: true, font: "Arial" })],
+      children: [...floating, new d.TextRun({ text: listTitle(cfg, date), size: cfg.titleSize * 2, bold: true, font: font.title })],
     }));
   }
   if (runsText(cfg.intro)) head.push(...para(cfg.intro, cfg.introSize, { align: align[cfg.introAlign] }), new d.Paragraph({ children: [] }));
 
   const doc = new d.Document({
-    styles: { default: { document: { run: { font: "Arial" } } } },
+    styles: { default: { document: { run: { font: font.data } } } },
     sections: [{
       properties: {
         page: {
@@ -289,7 +338,7 @@ export async function exportDocx(kind, cfg, cols, rows, date) {
         },
       },
       headers: cfg.datePosition === "header" && date
-        ? { default: new d.Header({ children: para(date, cfg.dateSize, { align: d.AlignmentType.RIGHT }) }) } : undefined,
+        ? { default: new d.Header({ children: para(date, cfg.dateSize, { align: d.AlignmentType.RIGHT, font: font.data }) }) } : undefined,
       footers: runsText(cfg.footer)
         ? { default: new d.Footer({ children: para(cfg.footer, cfg.footerSize, { align: align[cfg.footerAlign] }) }) } : undefined,
       children: [...head, table],

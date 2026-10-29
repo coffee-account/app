@@ -1,8 +1,8 @@
-import { html, useState, useRef, useLoad, Loading, Field, toast, useBusy, downloadBlob } from "../lib/ui.js";
+import { html, useState, useRef, useLoad, Loading, Field, toast, useBusy, downloadBlob, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import * as api from "../lib/api.js";
 import { sortPeople } from "../lib/accounting.js";
 import { isoDate, addDays } from "../lib/dates.js";
-import { defaultConfig, normalizeConfig, buildRows, paginate, listTitle, exportDocx, PAGE, listPeople, shadeColor, runLines, runsText } from "../lib/listgen.js";
+import { defaultConfig, normalizeConfig, buildRows, paginate, listTitle, exportDocx, PAGE, listPeople, shadeColor, headerTintColor, runLines, runsText, dutyFontSize } from "../lib/listgen.js";
 import { RichText } from "../lib/richtext.js";
 
 export function ListsPage() {
@@ -20,7 +20,7 @@ export function ListsPage() {
 function Designer({ kind }) {
   const state = useLoad(async () => {
     const [people, templates, duties] = await Promise.all([
-      api.listPeople(), api.listTemplates(kind), api.listDuties(isoDate(), addDays(isoDate(), 400)),
+      api.listPeople(), api.listTemplates(kind), api.listDuties(addDays(isoDate(), -60), addDays(isoDate(), 400)),
     ]);
     return { people, templates, duties };
   }, [kind]);
@@ -44,6 +44,7 @@ function DesignerBody({ kind, data, reload }) {
   const { cols, rows } = buildRows(kind, data.people, cfg, data.duties, date);
   const pages = paginate(cfg, rows);
   const current = data.templates.find((t) => t.id === templateId);
+  const isPending = usePendingDeletes();
 
   const chooseTemplate = (id) => {
     setTemplateId(id);
@@ -63,7 +64,11 @@ function DesignerBody({ kind, data, reload }) {
     setTemplateId(saved.id);
   });
   const makeDefault = () => run(async () => { await api.makeDefaultTemplate(kind, templateId); toast("This template now opens by default"); reload(); });
-  const removeTemplate = () => confirm(`Delete template "${current.name}"?`) && run(async () => { await api.deleteTemplate(templateId); setTemplateId(""); reload(); });
+  const removeTemplate = () => {
+    const id = templateId;
+    chooseTemplate("");
+    deferDelete({ key: `template:${id}`, message: `Template "${current.name}" deleted`, commit: () => api.deleteTemplate(id), onDone: reload });
+  };
 
   const onImage = (e) => {
     const file = e.target.files[0];
@@ -120,13 +125,13 @@ function DesignerBody({ kind, data, reload }) {
         <h3>Template</h3>
         <select value=${templateId} onChange=${(e) => chooseTemplate(e.target.value)}>
           <option value="">Built-in layout</option>
-          ${data.templates.map((t) => html`<option value=${t.id}>${t.name}${t.is_default ? " (default)" : ""}</option>`)}
+          ${data.templates.filter((t) => !isPending(`template:${t.id}`)).map((t) => html`<option value=${t.id}>${t.name}${t.is_default ? " (default)" : ""}</option>`)}
         </select>
         <div class="row" style="margin-top:8px">
           ${current && html`<button class="btn small" disabled=${busy} onClick=${() => saveTemplate(false)}>Save</button>`}
           <button class="btn small" disabled=${busy} onClick=${() => saveTemplate(true)}>Save as new…</button>
           ${current && !current.is_default && html`<button class="btn small" disabled=${busy} onClick=${makeDefault}>Make default</button>`}
-          ${current && html`<button class="btn small danger" disabled=${busy} onClick=${removeTemplate}>Delete</button>`}
+          ${current && html`<${ConfirmAction} question=${`Delete "${current.name}"?`} disabled=${busy} onConfirm=${removeTemplate} />`}
           <button class="btn small ghost" onClick=${() => { set(defaultConfig(kind)); setEditorKey((k) => k + 1); }}>Reset layout</button>
         </div>
       </div>
@@ -138,6 +143,9 @@ function DesignerBody({ kind, data, reload }) {
           <button class="btn primary" onClick=${print}>Print / save as PDF</button>
           <button class="btn" disabled=${busy} onClick=${docx}>Word (.docx)</button>
         </div>
+        <label class="check" style="margin-top:10px"><input type="checkbox" checked=${cfg.wordArial} onChange=${(e) => set({ wordArial: e.target.checked })} />
+          Use Arial in the Word file</label>
+        <p class="small muted" style="margin:4px 0 0">The Word file uses Fraunces, Newsreader and Schibsted Grotesk. Word shows other fonts where these aren't installed; they're free from Google Fonts.</p>
         <p class="small muted" style="margin:8px 0 0">${printed} people + ${cfg.blankRows} empty rows · ${pages.length} page${pages.length > 1 ? "s" : ""}.
           In the print dialog choose "Save as PDF" and turn off headers/footers.</p>
       </div>
@@ -173,6 +181,10 @@ function DesignerBody({ kind, data, reload }) {
         </div>
         <div class="row" style="margin:10px 0">
           <label class="check"><input type="checkbox" checked=${cfg.showGroup} onChange=${(e) => set({ showGroup: e.target.checked })} /> Group column</label>
+          <label class="check"><input type="checkbox" checked=${cfg.fiveLines} onChange=${(e) => set({ fiveLines: e.target.checked })} /> Heavier line after every 5 people</label>
+        </div>
+        <div class="form-grid" style="margin-bottom:10px">
+          <${Field} label="Header row grey (%)"><input type="number" min="0" max="30" value=${cfg.headerTint} onInput=${(e) => set({ headerTint: num(e) })} /><//>
         </div>
         <div class="form-grid" style="margin-bottom:10px">
           <${Field} label="Background"><select value=${cfg.shading} onChange=${(e) => set({ shading: e.target.value })}>
@@ -282,9 +294,19 @@ function Paper({ cfg, cols, rows, first, date, zoom }) {
     ${first && runsText(cfg.intro) && html`<div class="list-intro" style=${`font-size:${cfg.introSize}pt;text-align:${cfg.introAlign};${cfg.image ? `margin-${cfg.image.position}:${cfg.image.widthMm + 3}mm;min-height:${Math.max(0, (cfg.image.heightMm || 0) - cfg.titleSize * 0.46)}mm` : ""}`}><${Runs} value=${cfg.intro} /></div>`}
     <table class="list" style=${`font-size:${cfg.fontSize}pt;width:${cols.reduce((s, c) => s + c.width, 0)}mm`}>
       <colgroup>${cols.map((c) => html`<col style=${`width:${c.width}mm`} />`)}</colgroup>
-      <thead><tr style=${`height:${cfg.rowHeight}mm`}>${cols.map((c) => html`<th class=${c.tally ? "tally" : ""} style=${`font-size:${cfg.headerSize}pt`}>${c.label}</th>`)}</tr></thead>
-      <tbody>${rows.map((r) => html`<tr style=${`height:${cfg.rowHeight}mm${r.band ? `;background:${shade}` : ""}`}>
-        ${r.cells.map((v, j) => (v === null ? null : html`<td rowspan=${!cols[j].tally && r.span > 1 ? r.span : undefined}>${v}</td>`))}</tr>`)}</tbody>
+      <thead><tr style=${`height:${cfg.rowHeight}mm`}>${cols.map((c) => html`<th class=${c.tally ? "tally" : ""}
+        style=${`font-size:${cfg.headerSize}pt${Number(cfg.headerTint) > 0 ? `;background:${headerTintColor(cfg)}` : ""}`}>${c.label}</th>`)}</tr></thead>
+      <tbody>${rows.map((r, i) => {
+        const blockFive = r.span > 1 && rows[i + r.span - 1]?.fiveEnd; // merged cells end on the block's last row
+        return html`<tr class=${r.fiveEnd ? "five" : ""} style=${`height:${cfg.rowHeight}mm${r.band ? `;background:${shade}` : ""}`}>
+        ${r.cells.map((v, j) => {
+          if (v === null) return null;
+          const merged = !cols[j].tally && r.span > 1;
+          const duty = cols[j].fill === "duties";
+          return html`<td rowspan=${merged ? r.span : undefined} class="${merged && blockFive ? "five" : ""} ${duty ? "duty" : ""}"
+            style=${duty ? `font-size:${dutyFontSize(cfg)}pt` : undefined}>${v}</td>`;
+        })}</tr>`;
+      })}</tbody>
     </table>
     ${runsText(cfg.footer) && html`<div class="list-footer" style=${`font-size:${cfg.footerSize}pt;text-align:${cfg.footerAlign};bottom:${Math.max(3, m.bottom / 2)}mm;padding:0 ${m.side}mm`}><${Runs} value=${cfg.footer} /></div>`}
   </div>`;

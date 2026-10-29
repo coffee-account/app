@@ -24,6 +24,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+      # Browsers cache files for a while; adding the commit to every link means
+      # a new deploy is never mixed with old cached modules.
+      - name: Stamp file versions
+        env:
+          V: ${{ github.sha }}
+        run: |
+          find web/src -name '*.js' -exec perl -pi -e 's{(from\s+["'"'"'])(\.{1,2}/[^"'"'"'?]+\.js)(["'"'"'])}{$1$2?v=$ENV{V}$3}g' {} +
+          perl -pi -e 's{(src|href)="(src/main\.js|styles\.css)"}{$1="$2?v=$ENV{V}"}g' web/index.html
       - uses: actions/upload-pages-artifact@v3
         with:
           path: web

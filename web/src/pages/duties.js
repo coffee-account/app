@@ -1,9 +1,10 @@
-import { html, useState, useMemo, useLoad, Loading, Modal, toast, useBusy } from "../lib/ui.js";
+import { html, useState, useMemo, useLoad, Loading, Modal, toast, useBusy, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { personName, sortPeople, availabilityRules } from "../lib/accounting.js";
 import { weeksFrom, weekLabel, mondayOf, addDays, isoWeek, isoDate } from "../lib/dates.js";
 import { STATUS } from "./availability.js";
+import { StatusCup, CupLegend, EmptyState, WeekCalendar } from "../lib/drawings.js";
 
 const STATUS_ORDER = { available: 0, if_needed: 1, undefined: 2, unavailable: 3 };
 const statusLabel = Object.fromEntries(STATUS);
@@ -26,7 +27,7 @@ export function DutiesPage() {
 
   return html`
     <div class="page-head"><div><h1>Kitchen duty</h1>
-      <p>${manager ? "Assign people per week. Each assignment e-mails the person straight away." : "Who is on kitchen duty when."}</p></div>
+      <p>${manager ? "Assign people per week; each assignment e-mails them straight away." : "Who is on kitchen duty when."}</p></div>
       ${app.isAdmin && html`<${RemindButton} />`}
     </div>
     ${manager && html`<div class="tabs">
@@ -37,7 +38,10 @@ export function DutiesPage() {
       ? html`<${AvailabilityMatrix} data=${data} weeks=${weeks.slice(1)} settings=${app.settings} />`
       : html`<${Schedule} data=${data} weeks=${weeks} manager=${manager} app=${app}
           onAssign=${setAssigning} reload=${state.reload} />`}<//>
-    <div class="row" style="margin-top:12px"><button class="btn" onClick=${() => setSpan(span + 8)}>Show more weeks</button></div>
+    <div class="row" style="margin-top:12px;gap:18px">
+      <button class="btn-text" onClick=${() => setSpan(span + 8)}>Show 8 more weeks</button>
+      ${span > 12 && html`<button class="btn-text" onClick=${() => setSpan(Math.max(12, span - 8))}>Show 8 fewer weeks</button>`}
+    </div>
     ${assigning && state.data && html`<${AssignModal} week=${assigning} data=${state.data} settings=${app.settings}
       onClose=${() => setAssigning(null)} reload=${state.reload} />`}`;
 }
@@ -55,29 +59,38 @@ function Schedule({ data, weeks, manager, app, onAssign, reload }) {
   const byId = new Map(data.people.map((p) => [p.id, p]));
   const thisWeek = mondayOf();
   const [busy, run] = useBusy();
-  const remove = (a) => {
-    const p = byId.get(a.person_id);
-    if (!confirm(`Remove ${personName(p)} from ${weekLabel(a.week_start)}?`)) return;
-    const notify = a.week_start >= thisWeek && confirm("Send them a cancellation e-mail?");
-    run(async () => { await api.unassignDuty(a, notify); reload(); });
-  };
+  const isPending = usePendingDeletes();
+  // The cancellation e-mail only goes out once the Undo window has passed.
+  const remove = (a, notify) => deferDelete({
+    key: `duty:${a.id}`, message: `${personName(byId.get(a.person_id))} removed${notify ? "; they'll be e-mailed" : ""}`,
+    commit: () => api.unassignDuty(a, notify), onDone: reload,
+  });
   const resend = (a) => run(async () => { await api.resendDuty(a.id); toast("E-mail sent"); reload(); });
 
-  return html`<div class="table-wrap"><table class="data">
+  if (!manager && !data.duties.length) {
+    return html`<${EmptyState} drawing=${html`<${WeekCalendar} />`}>Nobody has been scheduled yet. Assignments will appear here.<//>`;
+  }
+  return html`<div class="table-wrap"><table class="data normal">
     <thead><tr><th>Week</th><th>On duty</th>${manager && html`<th></th>`}</tr></thead>
     <tbody>${weeks.map((w) => {
-      const rows = data.duties.filter((d) => d.week_start === w);
+      const rows = data.duties.filter((d) => d.week_start === w && !isPending(`duty:${d.id}`));
       const mine = rows.some((d) => d.person_id === app.person?.id);
       return html`<tr class=${w < thisWeek ? "inactive" : ""}>
         <td style="white-space:nowrap"><b>${weekLabel(w)}</b>
-          ${w === thisWeek && html` <span class="badge accent">this week</span>`}
+          ${w === thisWeek && html` <span class="badge">this week</span>`}
           ${mine && html` <span class="badge ok">you</span>`}</td>
-        <td>${rows.length ? rows.map((a) => html`<span class="chip" title=${a.notify_error ? `E-mail failed: ${a.notify_error}` : a.notified_at ? "E-mail sent" : ""}>
-            ${personName(byId.get(a.person_id))}${a.notify_error ? " ⚠️" : ""}
-            ${manager && a.notify_error && html`<button aria-label="Resend e-mail" title="Resend e-mail" disabled=${busy} onClick=${() => resend(a)}>↻</button>`}
-            ${manager && html`<button aria-label="Remove" disabled=${busy} onClick=${() => remove(a)}>×</button>`}
-          </span>`) : html`<span class="muted">—</span>`}</td>
-        ${manager && html`<td class="num"><button class="btn small" onClick=${() => onAssign(w)}>Assign…</button></td>`}
+        <td>${rows.length ? rows.map((a) => {
+          const name = personName(byId.get(a.person_id));
+          return html`<span class="chip" title=${a.notify_error ? `E-mail failed: ${a.notify_error}` : a.notified_at ? "E-mail sent" : ""}>
+            ${name}${a.notify_error && html` <span class="flag" aria-label="E-mail failed">!</span>`}
+            ${manager && a.notify_error && html`<button class="btn-text" disabled=${busy} onClick=${() => resend(a)}>Resend</button>`}
+            ${manager && html`<${ConfirmAction} label="×" ariaLabel=${`Remove ${name}`} align="left" question=${`Remove ${name}?`}
+              actions=${a.week_start >= thisWeek
+                ? [{ label: "Remove and e-mail", danger: true, onClick: () => remove(a, true) }, { label: "Remove quietly", danger: true, onClick: () => remove(a, false) }]
+                : [{ label: "Remove", danger: true, onClick: () => remove(a, false) }]} />`}
+          </span>`;
+        }) : html`<span class="muted">—</span>`}</td>
+        ${manager && html`<td class="num"><button class="btn small" onClick=${() => onAssign(w)}>Assign</button></td>`}
       </tr>`;
     })}</tbody>
   </table></div>`;
@@ -116,12 +129,14 @@ function AssignModal({ week, data, settings, onClose, reload }) {
     reload();
   });
 
-  return html`<${Modal} title=${`Assign — ${weekLabel(week)}`} onClose=${onClose} wide>
-    <p class="muted small">${assigned.size} assigned${target ? ` (target ${target})` : ""}. Sorted by availability, then by fewest duties in the last 12 months.</p>
-    <div class="form-grid" style="margin-bottom:10px">
-      <input placeholder="Search name" value=${search} onInput=${(e) => setSearch(e.target.value)} />
-      <input placeholder="Note for the e-mail (optional)" value=${note} onInput=${(e) => setNote(e.target.value)} />
+  return html`<${Modal} title=${`Assign · ${weekLabel(week)}`} onClose=${onClose} wide>
+    <p class="lede" style="margin:6px 0 14px">${assigned.size} assigned${target ? ` of ${target}` : ""}. Sorted by availability, then by fewest duties in the last 12 months.</p>
+    <${CupLegend} />
+    <div class="toolbar">
+      <input data-search placeholder="Search name" value=${search} onInput=${(e) => setSearch(e.target.value)} />
+      <input placeholder="Note for the e-mail (optional)" style="max-width:320px" value=${note} onInput=${(e) => setNote(e.target.value)} />
       <label class="check"><input type="checkbox" checked=${showAll} onChange=${(e) => setShowAll(e.target.checked)} /> Include people not on any list</label>
+      <span class="count">${people.length} people</span>
     </div>
     <div class="table-wrap" style="max-height:55vh;overflow-y:auto"><table class="data">
       <thead><tr><th>Name</th><th>Group</th><th>Availability</th><th class="num">Duties (12 mo.)</th><th>Last duty</th><th></th></tr></thead>
@@ -130,13 +145,13 @@ function AssignModal({ week, data, settings, onClose, reload }) {
         return html`<tr>
           <td>${personName(p)}${!p.has_account && html` <span class="badge" title="No account: they will only be e-mailed if an e-mail address is stored">no account</span>`}</td>
           <td>${p.group_name || ""}</td>
-          <td><span class="dot ${a?.status || ""}"></span>${a ? statusLabel[a.status] : html`<span class="muted">no answer</span>`}
+          <td><${StatusCup} state=${a?.status} label="" /> ${a ? statusLabel[a.status] : html`<span class="muted">no answer</span>`}
             ${a?.note && html`<div class="small muted">${a.note}</div>`}</td>
-          <td class="num">${dutyCount.get(p.id) || 0}</td>
+          <td class="num ${dutyCount.get(p.id) ? "" : "zero"}">${dutyCount.get(p.id) || 0}</td>
           <td>${lastDuty.get(p.id) ? `Week ${isoWeek(lastDuty.get(p.id))}, ${lastDuty.get(p.id).slice(0, 4)}` : "—"}</td>
           <td class="num">${assigned.has(p.id)
             ? html`<span class="badge ok">assigned</span>`
-            : html`<button class="btn small primary" disabled=${busy} onClick=${() => assign(p)}>Assign</button>`}</td>
+            : html`<button class="btn small" disabled=${busy} onClick=${() => assign(p)}>Assign</button>`}</td>
         </tr>`;
       })}</tbody>
     </table></div>
@@ -145,28 +160,37 @@ function AssignModal({ week, data, settings, onClose, reload }) {
 
 function AvailabilityMatrix({ data, weeks, settings }) {
   const { weeksAhead, requiredFor } = availabilityRules(settings);
+  const [missingFirst, setMissingFirst] = useState(true);
   const mandatory = new Set(weeksFrom(weeksAhead));
-  const people = sortPeople(data.people.filter((p) => requiredFor === "all" || p.active_coffee || p.active_drinks), "group");
+  const thisWeek = mondayOf();
   const key = (pid, w) => `${pid}|${w}`;
   const map = new Map(data.availability.map((a) => [key(a.person_id, a.week_start), a]));
-  const missingCount = (p) => [...mandatory].filter((w) => !map.has(key(p.id, w))).length;
-  return html`
-    <p class="muted small">Required window: the next ${weeksAhead} weeks.
-      <span class="dot available"></span>available <span class="dot if_needed"></span>if needed <span class="dot unavailable"></span>not available <span class="dot"></span>no answer</p>
-    <div class="table-wrap"><table class="data">
-      <thead><tr><th>Name</th><th class="num">Missing</th>${weeks.map((w) => html`<th title=${weekLabel(w)} style="text-align:center">W${isoWeek(w)}</th>`)}</tr></thead>
+  const missingCount = (p) => (p.has_account ? [...mandatory].filter((w) => !map.has(key(p.id, w))).length : 0);
+  let people = sortPeople(data.people.filter((p) => requiredFor === "all" || p.active_coffee || p.active_drinks), "group");
+  if (missingFirst) people = [...people].sort((a, b) => missingCount(b) - missingCount(a));
+  const short = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
+  return html`<div>
+    <div class="toolbar">
+      <${CupLegend} />
+      <label class="check"><input type="checkbox" checked=${missingFirst} onChange=${(e) => setMissingFirst(e.target.checked)} /> Missing answers first</label>
+      <span class="count">Required: the next ${weeksAhead} weeks · ${people.length} people</span>
+    </div>
+    <div class="table-wrap"><table class="data matrix">
+      <thead><tr><th scope="col"><div class="name-cell">Name</div></th><th class="num" scope="col">Missing</th>${weeks.map((w) => html`<th class="week ${w === thisWeek ? "current" : ""}" scope="col">
+        <span class="wk">W${isoWeek(w)}<small>${short.format(new Date(`${w}T00:00:00`))}</small></span></th>`)}</tr></thead>
       <tbody>${people.map((p) => {
         const m = missingCount(p);
         return html`<tr>
-          <td>${personName(p)} <span class="small muted">${p.group_name || ""}</span>${!p.has_account && html` <span class="badge">no account</span>`}</td>
-          <td class="num">${p.has_account ? (m ? html`<span class="badge warn">${m}</span>` : html`<span class="badge ok">0</span>`) : "—"}</td>
+          <td><div class="name-cell"><span>${personName(p)}</span>
+            <small>${[p.group_name, !p.has_account && "no account"].filter(Boolean).join(" · ")}</small></div></td>
+          <td class="num ${m ? "neg" : "zero"}">${p.has_account ? m : "—"}</td>
           ${weeks.map((w) => {
             const a = map.get(key(p.id, w));
-            return html`<td style="text-align:center" title=${a ? `${statusLabel[a.status]}${a.note ? `: ${a.note}` : ""}` : "no answer"}>
-              <span class="dot ${a?.status || ""}"></span></td>`;
+            const word = a ? `${statusLabel[a.status]}${a.note ? `: ${a.note}` : ""}` : "No answer";
+            return html`<td class="week ${w === thisWeek ? "current" : ""}"><${StatusCup} state=${a?.status} label=${`${weekLabel(w)}: ${word}`} /></td>`;
           })}
         </tr>`;
       })}</tbody>
-    </table></div>`;
+    </table></div>
+  </div>`;
 }
-

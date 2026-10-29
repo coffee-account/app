@@ -1,7 +1,8 @@
-import { html, useState, useLoad, Loading, Field, toast, useBusy, fmtEUR } from "../lib/ui.js";
+import { html, useState, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { fmtDate, isoDate } from "../lib/dates.js";
+import { ISSUE_CATEGORIES, APP_BUG } from "./issues.js";
 
 export function SettingsPage() {
   const app = useApp();
@@ -28,6 +29,10 @@ function GeneralSettings({ settings, onSaved }) {
     duty: { people_per_week: 2, info: "", reminders: true, ...settings.duty },
     balance: { low_threshold: -10, starting_label: "Starting balance", ...settings.balance },
     payment_info: settings.payment_info ?? "",
+    notifications: {
+      refund: settings.notifications?.refund ?? "",
+      issues: Object.fromEntries([...ISSUE_CATEGORIES, APP_BUG].map(([k]) => [k, settings.notifications?.issues?.[k] ?? ""])),
+    },
   }));
   const [busy, run] = useBusy();
   const sub = (key, patch) => setS((x) => ({ ...x, [key]: { ...x[key], ...patch } }));
@@ -62,14 +67,7 @@ function GeneralSettings({ settings, onSaved }) {
         </div>
       </div>
       <div class="card">
-        <h2>Invoices</h2>
-        <div class="grid">
-          <${Field} label="Send reimbursement requests to" hint="One or more addresses, comma-separated.">
-            <input value=${s.reimbursement.to} placeholder="finance@example.org" onInput=${(e) => sub("reimbursement", { to: e.target.value })} /><//>
-          <label class="check"><input type="checkbox" checked=${s.reimbursement.cc_submitter} onChange=${(e) => sub("reimbursement", { cc_submitter: e.target.checked })} />
-            Send a copy to the person who uploaded the invoice</label>
-        </div>
-        <h2 style="margin-top:18px">Kitchen duty</h2>
+        <h2>Kitchen duty</h2>
         <div class="grid">
           <div class="form-grid">
             <${Field} label="Weeks people must fill in ahead"><input type="number" min="1" max="26" value=${s.availability.weeks_ahead} onInput=${(e) => sub("availability", { weeks_ahead: e.target.value })} /><//>
@@ -88,11 +86,38 @@ function GeneralSettings({ settings, onSaved }) {
         </div>
       </div>
     </div>
+    <div class="card">
+      <h2>Notifications</h2>
+      <p class="lede" style="margin-bottom:14px">Who gets which e-mail. Several addresses: separate them with commas.
+        Empty fields under <i>Refunds</i> and <i>Reported issues</i> go to all admins.</p>
+      <div class="grid cols-2">
+        <div class="grid" style="align-content:start">
+          <h3 style="margin:0">Invoices and advance payments</h3>
+          <${Field} label="Reimbursement and advance requests"><input value=${s.reimbursement.to} placeholder="finance@example.org"
+            onInput=${(e) => sub("reimbursement", { to: e.target.value })} /><//>
+          <label class="check"><input type="checkbox" checked=${s.reimbursement.cc_submitter} onChange=${(e) => sub("reimbursement", { cc_submitter: e.target.checked })} />
+            Send a copy to the person who submitted it</label>
+          <h3 style="margin:10px 0 0">Refunds</h3>
+          <${Field} label="Refund requests"><input value=${s.notifications.refund} placeholder="all admins"
+            onInput=${(e) => sub("notifications", { refund: e.target.value })} /><//>
+          <h3 style="margin:10px 0 0">App issues and suggestions</h3>
+          <${Field} label="Issues and suggestions about this app"><input value=${s.notifications.issues.app} placeholder="all admins"
+            onInput=${(e) => { const v = e.target.value; setS((x) => ({ ...x, notifications: { ...x.notifications, issues: { ...x.notifications.issues, app: v } } })); }} /><//>
+        </div>
+        <div class="grid" style="align-content:start">
+          <h3 style="margin:0">Reported kitchen issues</h3>
+          ${ISSUE_CATEGORIES.map(([k, label]) => html`<${Field} label=${label}><input value=${s.notifications.issues[k]} placeholder="all admins"
+            onInput=${(e) => { const v = e.target.value; setS((x) => ({ ...x, notifications: { ...x.notifications, issues: { ...x.notifications.issues, [k]: v } } })); }} /><//>`)}
+        </div>
+      </div>
+    </div>
     <div class="row end" style="margin-bottom:16px"><button class="btn primary" disabled=${busy}>Save settings</button></div>
   </form>`;
 }
 
-function Prices({ prices, reload }) {
+function Prices({ prices: all, reload }) {
+  const isPending = usePendingDeletes();
+  const prices = all.filter((p) => !isPending(`price:${p.id}`));
   const [f, setF] = useState({ kind: "coffee", price: "", valid_from: isoDate() });
   const [busy, run] = useBusy();
   return html`<div class="card">
@@ -101,7 +126,7 @@ function Prices({ prices, reload }) {
     <div class="table-wrap" style="margin-bottom:12px"><table class="data">
       <thead><tr><th>List</th><th class="num">Price</th><th>Valid from</th><th></th></tr></thead>
       <tbody>${prices.map((p) => html`<tr><td>${p.kind}</td><td class="num">${fmtEUR(p.price)}</td><td>${p.valid_from <= "2000-01-01" ? "always" : fmtDate(p.valid_from)}</td>
-        <td class="num"><button class="btn small danger" disabled=${busy} onClick=${() => confirm("Delete this price?") && run(async () => { await api.deletePrice(p.id); reload(); })}>Delete</button></td></tr>`)}</tbody>
+        <td class="num"><${ConfirmAction} question="Delete price?" disabled=${busy} onConfirm=${() => deferDelete({ key: `price:${p.id}`, message: `${p.kind} price ${fmtEUR(p.price)} deleted`, commit: () => api.deletePrice(p.id), onDone: reload })} /></td></tr>`)}</tbody>
     </table></div>
     <form class="form-grid" onSubmit=${(e) => { e.preventDefault(); run(async () => { await api.addPrice({ ...f, price: Number(String(f.price).replace(",", ".")) }); toast("Price saved"); reload(); }); }}>
       <select value=${f.kind} onChange=${(e) => setF({ ...f, kind: e.target.value })} aria-label="List"><option value="coffee">Coffee</option><option value="drinks">Drinks</option></select>
@@ -112,7 +137,9 @@ function Prices({ prices, reload }) {
   </div>`;
 }
 
-function Groups({ groups, reload }) {
+function Groups({ groups: all, reload }) {
+  const isPending = usePendingDeletes();
+  const groups = all.filter((g) => !isPending(`group:${g.name}`));
   const [name, setName] = useState("");
   const [busy, run] = useBusy();
   return html`<div class="card">
@@ -120,7 +147,7 @@ function Groups({ groups, reload }) {
     <p class="small muted">Shown in the registration form and on the lists. Renaming updates everyone in the group.</p>
     ${groups.map((g) => html`<div class="row" style="margin-bottom:6px"><span>${g.name}</span><span class="spacer"></span>
       <button class="btn small" disabled=${busy} onClick=${() => { const to = prompt("New name", g.name); if (to && to !== g.name) run(async () => { await api.renameGroup(g.name, to.trim()); reload(); }); }}>Rename</button>
-      <button class="btn small danger" disabled=${busy} onClick=${() => confirm(`Delete group ${g.name}? People keep their entry but lose the group.`) && run(async () => { await api.deleteGroup(g.name); reload(); })}>Delete</button></div>`)}
+      <${ConfirmAction} question=${`Delete ${g.name}? People keep their entry.`} disabled=${busy} onConfirm=${() => deferDelete({ key: `group:${g.name}`, message: `Group ${g.name} deleted`, commit: () => api.deleteGroup(g.name), onDone: reload })} /></div>`)}
     <form class="row" style="margin-top:10px" onSubmit=${(e) => { e.preventDefault(); run(async () => { await api.addGroup(name.trim()); setName(""); reload(); }); }}>
       <input required placeholder="New group" value=${name} onInput=${(e) => setName(e.target.value)} style="max-width:240px" />
       <button class="btn" disabled=${busy}>Add group</button>
