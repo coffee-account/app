@@ -2,9 +2,12 @@ import { html, useState, useLoad, Loading, Field, toast, useBusy, fmtEUR, Confir
 import * as api from "../lib/api.js";
 import { computeLedger, personName, sortPeople } from "../lib/accounting.js";
 import { isoDate, fmtDate } from "../lib/dates.js";
+import { useApp } from "../lib/context.js";
 
 export function PaymentsPage() {
-  const state = useLoad(() => api.loadLedgerData());
+  const app = useApp();
+  const group = app.isAdmin ? null : app.managedGroup; // group admins: their group's payments only
+  const state = useLoad(() => api.loadLedgerData(undefined, group));
   const [q, setQ] = useState("");
   const [busy, run] = useBusy();
   const isPending = usePendingDeletes();

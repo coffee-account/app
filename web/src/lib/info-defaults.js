@@ -54,7 +54,8 @@ export const DEFAULT_ADMIN_INFO = `## Regular routine
 ## People and accounts
 - New people register themselves. Connect each account to their entry under **Accounts & roles**, then switch them on for coffee and/or drinks under **People**.
 - People with counts or payments can't be deleted; switch both lists off instead.
-- Give duty managers the *Manage kitchen duty* right, and invoice helpers *Upload invoices*.
+- Give duty managers the *Manage kitchen duty* right, invoice helpers *Upload invoices*, and whoever looks after reported issues *Resolve reports*.
+- A **group admin** looks after one group: its people and their lists, connecting its new accounts, its balances, payments and counts. Group admins also see this admin part and admin-only updates, but can't change settings, roles, prices or starting balances.
 
 ## Notifications
 Under **Settings → Notifications** you choose who gets which e-mail: reimbursement and advance requests, refund requests, and each kind of reported issue. Empty fields go to all admins.

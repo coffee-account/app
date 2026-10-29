@@ -3,14 +3,14 @@ import { EmptyState, TallySheet } from "../lib/drawings.js";
 import * as api from "../lib/api.js";
 import { sortPeople, priceAt, personName } from "../lib/accounting.js";
 import { isoDate, fmtDate } from "../lib/dates.js";
+import { useApp } from "../lib/context.js";
 
 const KIND_LABEL = { coffee: "Coffee", drinks: "Drinks" };
 
 export function CountingPage() {
-  const state = useLoad(async () => {
-    const data = await api.loadLedgerData();
-    return data;
-  });
+  const app = useApp();
+  const group = app.isAdmin ? null : app.managedGroup; // group admins count their group only
+  const state = useLoad(() => api.loadLedgerData(undefined, group));
   const [editing, setEditing] = useState(null);
   const isPending = usePendingDeletes();
 
@@ -49,6 +49,9 @@ export function CountingPage() {
 }
 
 function SessionEditor({ session, data, onClose, onReload }) {
+  const app = useApp();
+  // Sessions are shared by all groups: only admins change their date or note, or delete them.
+  const lockSession = !app.isAdmin && !!session.id;
   const [meta, setMeta] = useState({ ...session });
   const [original] = useState(() => new Map(
     data.counts.filter((c) => c.session_id === session.id).map((c) => [c.person_id, c.quantity]),
@@ -71,7 +74,7 @@ function SessionEditor({ session, data, onClose, onReload }) {
   };
   const save = () => run(async () => {
     const counts = new Map(listed.map((p) => [p.id, values.get(p.id) || 0]));
-    await api.saveSession(meta, counts);
+    await api.saveSession(meta, counts, { editSession: app.isAdmin });
     dirty.clear();
     toast("Counts saved");
     onClose();
@@ -100,8 +103,8 @@ function SessionEditor({ session, data, onClose, onReload }) {
     <div class="card"><div class="form-grid">
       <${Field} label="List"><select value=${meta.kind} disabled=${!!meta.id} onChange=${(e) => setMeta({ ...meta, kind: e.target.value })}>
         <option value="coffee">Coffee</option><option value="drinks">Drinks</option></select><//>
-      <${Field} label="Date collected"><input type="date" value=${meta.session_date} onInput=${(e) => { dirty.mark(); setMeta({ ...meta, session_date: e.target.value }); }} /><//>
-      <${Field} label="Note"><input value=${meta.note || ""} onInput=${(e) => { dirty.mark(); setMeta({ ...meta, note: e.target.value }); }} /><//>
+      <${Field} label="Date collected"><input type="date" value=${meta.session_date} disabled=${lockSession} onInput=${(e) => { dirty.mark(); setMeta({ ...meta, session_date: e.target.value }); }} /><//>
+      <${Field} label="Note"><input value=${meta.note || ""} disabled=${lockSession} onInput=${(e) => { dirty.mark(); setMeta({ ...meta, note: e.target.value }); }} /><//>
     </div></div>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name</th><th>Group</th><th class="num">Marks</th><th class="num">Amount</th></tr></thead>
@@ -122,7 +125,7 @@ function SessionEditor({ session, data, onClose, onReload }) {
         ${others.map((p) => html`<option value=${p.id}>${p.last_name}, ${p.first_name}</option>`)}
       </select>
       <span class="spacer"></span>
-      ${meta.id && html`<${ConfirmAction} label="Delete session" question="Delete this whole count session?" disabled=${busy} onConfirm=${remove} />`}
+      ${meta.id && app.isAdmin && html`<${ConfirmAction} label="Delete session" question="Delete this whole count session?" disabled=${busy} onConfirm=${remove} />`}
       ${changed.size > 0 && html`<span class="small muted">${changed.size} change${changed.size > 1 ? "s" : ""} not saved</span>`}
       <button class="btn primary" disabled=${busy} onClick=${save}>Save counts</button>
     </div>

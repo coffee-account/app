@@ -13,7 +13,7 @@
 //   weekly             {}                        cron or admin: availability + duty reminders
 //   refund_requested   { request_id }            the requester or admin
 //   issue_reported     { issue_id }              the reporter or admin
-//   issue_resolved     { issue_id }              duty manager: tells the reporter
+//   issue_resolved     { issue_id }              admin or "resolve reports" right: tells the reporter
 
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
 import { escapeHtml, layout, sendMail } from "./mailer.ts";
@@ -72,6 +72,7 @@ async function identify(req: Request): Promise<Caller> {
 
 const isAdmin = (c: Caller) => c.kind === "cron" || c.profile.role === "admin";
 const isDutyManager = (c: Caller) => isAdmin(c) || (c.kind === "user" && c.profile.can_manage_duties);
+const canResolve = (c: Caller) => isAdmin(c) || (c.kind === "user" && c.profile.can_resolve_reports);
 
 async function settings(): Promise<Record<string, any>> {
   const { data } = await db.from("settings").select("key, value");
@@ -229,7 +230,7 @@ const ISSUE_LABEL: Record<string, string> = {
 async function issueReported(caller: Caller, body: any, s: Record<string, any>) {
   const { data: it } = await db.from("issues").select("*").eq("id", body.issue_id).single();
   if (!it) throw new HttpError(404, "Issue not found");
-  if (!isAdmin(caller) && (caller.kind !== "user" || it.reported_by !== caller.id)) throw new HttpError(403, "Not allowed");
+  if (!canResolve(caller) && (caller.kind !== "user" || it.reported_by !== caller.id)) throw new HttpError(403, "Not allowed");
   const to = addresses(s.notifications?.issues?.[it.category]);
   const recipients = to.length ? to : await adminEmails();
   const reporterEmail = await profileEmail(it.reported_by);
@@ -254,7 +255,7 @@ async function issueReported(caller: Caller, body: any, s: Record<string, any>) 
 }
 
 async function issueResolved(caller: Caller, body: any, s: Record<string, any>) {
-  if (!isDutyManager(caller)) throw new HttpError(403, "Not allowed");
+  if (!canResolve(caller)) throw new HttpError(403, "Not allowed");
   const { data: it } = await db.from("issues").select("*").eq("id", body.issue_id).single();
   const email = it && await profileEmail(it.reported_by);
   if (!email) return { sent: false };

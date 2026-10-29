@@ -30,17 +30,19 @@ function seed() {
   ];
   const people = names.map(([last_name, first_name, group_name], i) => ({
     id: uuid(), last_name, first_name, group_name, legacy_id: `${last_name}.${first_name}`.toLowerCase(),
-    email: i < 2 ? `${first_name.toLowerCase()}@example.org` : null,
+    email: i < 3 ? `${first_name.toLowerCase()}@example.org` : null,
     active_coffee: i !== 13, active_drinks: i % 3 !== 2, starting_balance: [5, -4.4, 0, 12, -8.8, 3, 0, -2, 7.5, 0, 1, -14.8, 4, 0][i],
     notes: null, created_at: new Date().toISOString(),
   }));
   const users = [
     { id: uuid(), email: "ada@example.org", role: "admin", person: people[0] },
     { id: uuid(), email: "bob@example.org", role: "member", person: people[1] },
+    { id: uuid(), email: "clara@example.org", role: "group_admin", person: people[2], group: "Group A" },
   ];
   const profiles = users.map((u) => ({
     id: u.id, email: u.email, first_name: u.person.first_name, last_name: u.person.last_name, group_name: u.person.group_name,
-    role: u.role, can_upload_invoices: false, can_manage_duties: false, person_id: u.person.id, suggested_person_id: null,
+    role: u.role, managed_group: u.group || null, can_upload_invoices: false, can_manage_duties: false, can_resolve_reports: false,
+    person_id: u.person.id, suggested_person_id: null,
     created_at: new Date().toISOString(),
   }));
   const today = isoDate();
@@ -62,7 +64,8 @@ function seed() {
   }));
   const thisWeek = mondayOf(today);
   const availability = [];
-  people.slice(2, 10).forEach((p, i) => {
+  // Sample availability only for people without a demo login (Ada, Bob and Clara fill in their own).
+  people.slice(3, 10).forEach((p, i) => {
     for (let w = 0; w < 6; w++) {
       availability.push({ person_id: p.id, week_start: addDays(thisWeek, w * 7), status: ["available", "if_needed", "unavailable"][(i + w) % 3], note: null });
     }
@@ -306,6 +309,13 @@ export function createDemoClient(notify) {
       },
     },
     async rpc(name, args) {
+      if (name === "connect_account" || name === "disconnect_account") {
+        const prof = store.db.profiles.find((x) => x.id === args.profile);
+        if (!prof) return { data: null, error: { message: "Account not found" } };
+        Object.assign(prof, name === "connect_account" ? { person_id: args.person, suggested_person_id: null } : { person_id: null });
+        store.save();
+        return { data: null, error: null };
+      }
       if (name === "complete_refund") {
         const db = store.db;
         const r = db.refund_requests.find((x) => x.id === args.request_id);

@@ -35,8 +35,8 @@ export function InfoPage() {
         <${Updates} updates=${updates} admin=${app.isAdmin} reload=${state.reload} seenBefore=${seenBefore} />
         <${InfoBlock} title="How it works" settingKey="info" text=${settings.info} fallback=${DEFAULT_INFO}
           vars=${vars} editable=${app.isAdmin} reload=${state.reload} />
-        ${app.isAdmin && html`<${InfoBlock} title="For admins" note="Only admins see this part." settingKey="info_admin"
-          text=${settings.info_admin} fallback=${DEFAULT_ADMIN_INFO} vars=${vars} editable reload=${state.reload} />`}
+        ${app.seesAdminMessages && html`<${InfoBlock} title="For admins" note="Only admins and group admins see this part." settingKey="info_admin"
+          text=${settings.info_admin} fallback=${DEFAULT_ADMIN_INFO} vars=${vars} editable=${app.isAdmin} reload=${state.reload} />`}
         <div style="margin-top:32px">
           <${DictEntry} word="de·cof·fi·cit" pos="n.">The gap between how many coffees were marked and how many were actually drunk.<//>
         </div>
@@ -48,7 +48,7 @@ function Updates({ updates, admin, reload, seenBefore }) {
   const app = useApp();
   const [editing, setEditing] = useState(null); // null | {} (new) | update
   const isPending = usePendingDeletes();
-  const visible = updates.filter((u) => !isPending(`update:${u.id}`) && (admin || u.audience !== "admins"));
+  const visible = updates.filter((u) => !isPending(`update:${u.id}`) && (app.seesAdminMessages || u.audience !== "admins"));
   const remove = (u) => deferDelete({ key: `update:${u.id}`, message: `Update "${u.title}" deleted`, commit: () => api.deleteUpdate(u.id), onDone: reload });
   return html`<section class="updates">
     <div class="row" style="margin-bottom:12px"><h2 style="margin:0">Updates</h2><span class="spacer"></span>
@@ -86,7 +86,7 @@ function UpdateForm({ update, onDone, onCancel }) {
       <div class="row">
         <div class="seg" role="group" aria-label="Who sees it">
           <button type="button" class=${u.audience === "all" ? "on" : ""} aria-pressed=${u.audience === "all"} onClick=${() => set("audience", "all")}>Everyone</button>
-          <button type="button" class=${u.audience === "admins" ? "on" : ""} aria-pressed=${u.audience === "admins"} onClick=${() => set("audience", "admins")}>Admins only</button>
+          <button type="button" class=${u.audience === "admins" ? "on" : ""} aria-pressed=${u.audience === "admins"} onClick=${() => set("audience", "admins")}>Admins and group admins</button>
         </div>
         <label class="check"><input type="checkbox" checked=${u.pinned} onChange=${(e) => set("pinned", e.target.checked)} /> Keep at the top</label>
         <span class="spacer"></span>

@@ -74,6 +74,9 @@ export async function deletePerson(id) {
 export const getMyProfile = (uid) => q(sb.from("profiles").select("*").eq("id", uid).maybeSingle());
 export const listProfiles = () => q(sb.from("profiles").select("*").order("email"));
 export const updateProfile = (id, patch) => q(sb.from("profiles").update(patch).eq("id", id));
+// Connecting accounts goes through database functions that check the group admin's group.
+export const connectAccount = (profileId, personId) => q(sb.rpc("connect_account", { profile: profileId, person: personId }));
+export const disconnectAccount = (profileId) => q(sb.rpc("disconnect_account", { profile: profileId }));
 
 // ── Prices ──
 export const listPrices = () => q(sb.from("prices").select("*").order("kind").order("valid_from"));
@@ -85,10 +88,18 @@ export const listSessions = () => q(sb.from("count_sessions").select("*").order(
 export const listCounts = (sessionId) => q(sb.from("counts").select("*").eq("session_id", sessionId));
 
 /** Creates or updates a session and replaces its counts. `counts`: Map personId → quantity. */
-export async function saveSession({ id, kind, session_date, note }, counts) {
-  const row = id
-    ? await q(sb.from("count_sessions").update({ kind, session_date, note }).eq("id", id).select().single())
-    : await q(sb.from("count_sessions").insert({ kind, session_date, note }).select().single());
+export async function saveSession({ id, kind, session_date, note }, counts, { editSession = true } = {}) {
+  let row;
+  if (id) {
+    // Group admins may add counts to a session but not change its date or note.
+    row = editSession
+      ? await q(sb.from("count_sessions").update({ kind, session_date, note }).eq("id", id).select().single())
+      : { id };
+  } else {
+    // A session for that list and date may already exist (e.g. started by another group): join it.
+    const existing = await q(sb.from("count_sessions").select("*").eq("kind", kind).eq("session_date", session_date).maybeSingle());
+    row = existing || await q(sb.from("count_sessions").insert({ kind, session_date, note }).select().single());
+  }
   const keep = [...counts].filter(([, n]) => n > 0).map(([person_id, quantity]) => ({ session_id: row.id, person_id, quantity }));
   const drop = [...counts].filter(([, n]) => !(n > 0)).map(([pid]) => pid);
   if (keep.length) await q(sb.from("counts").upsert(keep, { onConflict: "session_id,person_id" }));
@@ -103,16 +114,21 @@ export const addPayment = (row) => q(sb.from("payments").insert(row));
 export const deletePayment = (id) => q(sb.from("payments").delete().eq("id", id));
 
 /** Everything needed for balances. Pass a personId to load one member's own data. */
-export async function loadLedgerData(personId) {
+export async function loadLedgerData(personId, group) {
   const only = (query) => (personId ? query.eq("person_id", personId) : query);
   const [people, sessions, counts, payments, prices] = await Promise.all([
-    personId ? q(sb.from("people").select("*").eq("id", personId)) : listPeople(),
+    personId ? q(sb.from("people").select("*").eq("id", personId))
+      : group ? q(sb.from("people").select("*").eq("group_name", group).order("last_name"))
+      : listPeople(),
     q(sb.from("count_sessions").select("*")),
     q(only(sb.from("counts").select("*"))),
     q(only(sb.from("payments").select("*"))),
     listPrices(),
   ]);
-  return { people, sessions, counts, payments, prices };
+  if (!group) return { people, sessions, counts, payments, prices };
+  // Group admins: the database returns only their group anyway; this keeps the demo the same.
+  const ids = new Set(people.map((p) => p.id));
+  return { people, sessions, counts: counts.filter((c) => ids.has(c.person_id)), payments: payments.filter((p) => ids.has(p.person_id)), prices };
 }
 
 // ── Kitchen duty ──

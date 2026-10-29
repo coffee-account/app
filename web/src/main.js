@@ -31,13 +31,13 @@ const ROUTES = [
   { path: "invoices", title: "Invoices", page: InvoicesPage, section: "ME", show: (a) => a.canUpload },
   { path: "issues", title: "Report an issue", page: IssuesPage, section: "ME", show: () => true },
   { path: "refunds", title: "Refunds", page: RefundsPage, section: "ME", show: (a) => !!a.person || a.isAdmin },
-  { path: "balances", title: "Balances", page: BalancesPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
-  { path: "counting", title: "Counting", page: CountingPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
-  { path: "payments", title: "Payments", page: PaymentsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
+  { path: "balances", title: "Balances", page: BalancesPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "counting", title: "Counting", page: CountingPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "payments", title: "Payments", page: PaymentsPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "paypal", title: "PayPal import", page: PaypalPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
   { path: "lists", title: "Print lists", page: ListsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
-  { path: "people", title: "People", page: PeoplePage, section: "ADMIN", show: (a) => a.isAdmin },
-  { path: "accounts", title: "Accounts & roles", page: AccountsPage, section: "ADMIN", show: (a) => a.isAdmin },
+  { path: "people", title: "People", page: PeoplePage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "accounts", title: "Accounts & roles", page: AccountsPage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "settings", title: "Settings", page: SettingsPage, section: "ADMIN", show: (a) => a.isAdmin },
   { path: "import", title: "Import spreadsheet", page: ImportPage, section: "ADMIN", show: (a) => a.isAdmin },
 ];
@@ -100,6 +100,7 @@ function AuthScreen({ settings, groups }) {
     ${api.isDemo && html`<div class="notice"><b>Demo mode.</b> No database is configured; data stays in this browser.
       <div class="row" style="margin-top:8px">
         <button class="btn small" onClick=${() => run(() => api.auth.signIn("ada@example.org", "x"))}>Sign in as admin</button>
+        <button class="btn small" onClick=${() => run(() => api.auth.signIn("clara@example.org", "x"))}>Sign in as group admin</button>
         <button class="btn small" onClick=${() => run(() => api.auth.signIn("bob@example.org", "x"))}>Sign in as member</button>
       </div></div>`}
     <div class="tabs">
@@ -162,7 +163,7 @@ function Shell({ app }) {
     if (!app.profile.skip_info) { if (currentPath() === "") location.hash = "#/info"; return; }
     const seen = app.profile.updates_seen_at || app.profile.created_at || "";
     api.listUpdates().then((ups) => {
-      const fresh = ups.filter((u) => u.created_at > seen && u.created_by !== app.user.id && (app.isAdmin || u.audience !== "admins"));
+      const fresh = ups.filter((u) => u.created_at > seen && u.created_by !== app.user.id && (app.seesAdminMessages || u.audience !== "admins"));
       if (fresh.length) setFreshUpdates(fresh); // a pop-up instead of the full Info page
     }).catch(() => { /* not important enough to interrupt sign-in */ });
   }, []);
@@ -213,7 +214,7 @@ function Shell({ app }) {
         <div><b>${app.person ? personName(app.person) : app.profile.email}</b></div>
         <div class="email">${app.profile.email}</div>
         <div class="row">
-          <span class="badge ${app.isAdmin ? "accent" : ""}">${app.isAdmin ? "Admin" : "Member"}</span>
+          <span class="badge ${app.isAdmin || app.isGroupAdmin ? "accent" : ""}">${app.isAdmin ? "Admin" : app.isGroupAdmin ? `Group admin · ${app.managedGroup}` : "Member"}</span>
           ${app.canManageDuties && !app.isAdmin && html`<span class="badge">Duty manager</span>`}
           ${app.canUpload && !app.isAdmin && html`<span class="badge">Invoices</span>`}
         </div>
@@ -280,10 +281,15 @@ function App() {
         availabilityMissing = missingAvailability(settings, rows);
       }
       const isAdmin = profile.role === "admin";
+      const isGroupAdmin = profile.role === "group_admin" && !!profile.managed_group;
       setState({
         phase: "ready",
         app: {
           session, user: session.user, profile, person, settings, isAdmin,
+          isGroupAdmin,
+          managedGroup: isGroupAdmin ? profile.managed_group : null,
+          seesAdminMessages: isAdmin || isGroupAdmin,
+          canResolve: isAdmin || !!profile.can_resolve_reports,
           canUpload: isAdmin || profile.can_upload_invoices,
           canManageDuties: isAdmin || profile.can_manage_duties,
           availabilityMissing,

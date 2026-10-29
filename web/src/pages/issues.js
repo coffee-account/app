@@ -139,7 +139,7 @@ function IssueList({ rows, show, app, reload, bugs }) {
     return html`<${EmptyState} drawing=${html`<${LayeredCup} size=${96} />`}>${show !== "open" ? "Nothing here yet."
       : bugs ? "No open issues or suggestions." : "Nothing reported. All good in the kitchen."}<//>`;
   }
-  const manager = app.canManageDuties;
+  const manager = app.canResolve; // admins and people with the "Resolve reports" right
   const resolve = (r) => run(async () => {
     await api.resolveIssue(app.user.id, r.id, note, true);
     setResolving(null);

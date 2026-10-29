@@ -17,7 +17,8 @@ const COLUMNS = [
 
 export function BalancesPage() {
   const app = useApp();
-  const state = useLoad(() => api.loadLedgerData());
+  const group = app.isAdmin ? null : app.managedGroup;
+  const state = useLoad(() => api.loadLedgerData(undefined, group));
   const [show, setShow] = usePersisted("balances.show", "active");
   const [sort, setSort] = usePersisted("balances.sort", ["balance", true]);
   const [q, setQ] = useState("");
