@@ -18,7 +18,10 @@ const COLUMNS = [
 export function BalancesPage() {
   const app = useApp();
   const group = app.isAdmin ? null : app.managedGroup;
-  const state = useLoad(() => api.loadLedgerData(undefined, group));
+  const state = useLoad(async () => {
+    const [ledger, settings] = await Promise.all([api.loadLedgerData(undefined, group), app.isAdmin ? api.loadSettings() : {}]);
+    return { ...ledger, paypal: settings.paypal_balance || null }; // newest balance from an imported PayPal statement
+  });
   const [show, setShow] = usePersisted("balances.show", "active");
   const [sort, setSort] = usePersisted("balances.sort", ["balance", true]);
   const [q, setQ] = useState("");
@@ -49,12 +52,10 @@ export function BalancesPage() {
         return sort[1] ? c : -c;
       });
       const all = [...ledger.values()];
-      const sum = (f) => all.reduce((s, r) => s + f(r), 0);
       const lowCount = all.filter((r) => r.balance < low && (r.person.active_coffee || r.person.active_drinks)).length;
       return html`
         <${Figures} items=${[
-          { label: "Sum of all balances", value: fmtEUR(sum((r) => r.balance)), tone: sum((r) => r.balance) < 0 ? "neg" : "pos", sub: "credit the members hold" },
-          { label: "Paid in", value: fmtEUR(sum((r) => r.paid)), sub: `${fmtEUR(sum((r) => r.coffeeCost + r.drinksCost))} consumed` },
+          ...(app.isAdmin ? [paypalFigure(data.paypal)] : []),
           { label: `Below ${fmtEUR(low)}`, value: lowCount, tone: lowCount ? "neg" : "", sub: "active people to remind" },
         ]} />
         <div class="toolbar">
@@ -95,6 +96,15 @@ function DetailModal({ row, label, onClose }) {
       </tbody>
     </table></div>
   <//>`;
+}
+
+/** Figure for the newest PayPal balance ({ amount, as_of } from settings, or null). */
+export function paypalFigure(paypal, linked = true) {
+  const imp = linked ? html`<a href="#/paypal">PayPal import</a>` : "PayPal import";
+  return paypal
+    ? { label: "PayPal balance", value: fmtEUR(paypal.amount), tone: paypal.amount < 0 ? "neg" : "",
+        sub: html`on ${fmtDate(paypal.as_of)}, from the last ${imp}` }
+    : { label: "PayPal balance", value: "—", sub: html`appears after the first ${imp}` };
 }
 
 export function exportCsv(data) {

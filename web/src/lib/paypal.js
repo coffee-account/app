@@ -45,6 +45,7 @@ const COLUMNS = {
   id: ["transaction id", "transaktionscode", "transaktions-id"],
   note: ["note", "hinweis", "subject", "betreff", "nachricht", "message"],
   impact: ["balance impact", "auswirkung auf guthaben"],
+  balance: ["balance", "guthaben", "kontostand"],   // account balance after the transaction
 };
 
 function columnIndex(header) {
@@ -87,6 +88,8 @@ function dateParser(values) {
 
 const COMPLETED = new Set(["completed", "abgeschlossen", "erhalten", "received", ""]);
 const DEBIT = new Set(["debit", "soll", "belastung"]);
+// Outgoing rows that aren't payments to a person.
+const NOT_A_PAYOUT = /withdrawal|abbuchung|bankkonto|bank account|fee|gebühr|entgelt|conversion|umrechnung|hold|einbehalt|reversal|rückbuchung/i;
 
 /**
  * Reads a PayPal activity CSV and returns the incoming euro payments.
@@ -105,22 +108,40 @@ export function readStatement(text) {
   const skipped = {};
   const skip = (reason) => { skipped[reason] = (skipped[reason] || 0) + 1; };
   const payments = [];
+  const payouts = [];
+  let balance = null; // newest account balance in euro
   for (const r of data) {
     const amount = parseAmount(get(r, "gross"));
     const currency = get(r, "currency").toUpperCase();
     const status = get(r, "status").toLowerCase();
-    if (!(amount > 0) || DEBIT.has(get(r, "impact").toLowerCase())) { skip("outgoing payments, fees and withdrawals"); continue; }
+    const type = get(r, "type");
+    const date = toDate(get(r, "date"));
+    const bal = parseAmount(get(r, "balance"));
+    if (date && !Number.isNaN(bal) && (!currency || currency === "EUR")) {
+      const stamp = `${date} ${get(r, "time")}`;
+      if (!balance || stamp >= balance.stamp) balance = { amount: Math.round(bal * 100) / 100, date, stamp };
+    }
     if (currency && currency !== "EUR") { skip("not in euro"); continue; }
     if (!COMPLETED.has(status)) { skip("not completed (pending, refunded, …)"); continue; }
-    if (!get(r, "name") && !get(r, "from")) { skip("no sender (e.g. bank top-ups)"); continue; }
-    const date = toDate(get(r, "date"));
     if (!date) { skip("unreadable date"); continue; }
+    const outgoing = amount < 0 || DEBIT.has(get(r, "impact").toLowerCase());
+    if (outgoing) {
+      // Money sent to someone: offered as a payout. Bank withdrawals, fees and conversions are left out.
+      if (NOT_A_PAYOUT.test(type) || (!get(r, "name") && !get(r, "to"))) { skip("withdrawals, fees and conversions"); continue; }
+      payouts.push({
+        id: get(r, "id"), date, amount: Math.round(Math.abs(amount) * 100) / 100,
+        name: get(r, "name"), email: get(r, "to").toLowerCase(), note: get(r, "note"), type,
+      });
+      continue;
+    }
+    if (!(amount > 0)) { skip("zero amounts"); continue; }
+    if (!get(r, "name") && !get(r, "from")) { skip("no sender (e.g. bank top-ups)"); continue; }
     payments.push({
       id: get(r, "id"), date, amount: Math.round(amount * 100) / 100,
-      name: get(r, "name"), email: get(r, "from").toLowerCase(), note: get(r, "note"), type: get(r, "type"),
+      name: get(r, "name"), email: get(r, "from").toLowerCase(), note: get(r, "note"), type,
     });
   }
-  return { payments, skipped, columnsMissing: missing };
+  return { payments, payouts, balance: balance && { amount: balance.amount, date: balance.date }, skipped, columnsMissing: missing };
 }
 
 // ── Matching ──

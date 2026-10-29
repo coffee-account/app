@@ -32,8 +32,16 @@ jobs:
         run: |
           find web/src -name '*.js' -exec perl -pi -e 's{(from\s+["'"'"'])(\.{1,2}/[^"'"'"'?]+\.js)(["'"'"'])}{$1$2?v=$ENV{V}$3}g' {} +
           perl -pi -e 's{(src|href)="(src/main\.js|styles\.css)"}{$1="$2?v=$ENV{V}"}g' web/index.html
+      # The same app again under /demo/, without a database: it runs the built-in demo
+      # with made-up people, and whatever visitors change stays in their own browser.
+      - name: Add the online demo
+        run: |
+          mkdir -p _site/demo
+          cp -R web/. _site/
+          cp -R web/index.html web/styles.css web/src _site/demo/
+          printf 'window.APP_CONFIG = { supabaseUrl: "", supabaseAnonKey: "", onlineDemo: true };\n' > _site/demo/config.js
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: web
+          path: _site
       - id: deployment
         uses: actions/deploy-pages@v4

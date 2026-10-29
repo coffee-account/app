@@ -37,10 +37,13 @@ const ROUTES = [
   { path: "paypal", title: "PayPal import", page: PaypalPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
   { path: "lists", title: "Print lists", page: ListsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
   { path: "people", title: "People", page: PeoplePage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
-  { path: "accounts", title: "Accounts & roles", page: AccountsPage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "accounts", title: (a) => (a.isAdmin ? "Accounts & roles" : "Accounts"), page: AccountsPage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "settings", title: "Settings", page: SettingsPage, section: "ADMIN", show: (a) => a.isAdmin },
   { path: "import", title: "Import spreadsheet", page: ImportPage, section: "ADMIN", show: (a) => a.isAdmin },
 ];
+
+// A route's title may depend on who is signed in.
+const titleOf = (r, app) => (typeof r.title === "function" ? r.title(app) : r.title);
 
 // Pages that stay reachable while someone still has to fill in their availability.
 const OPEN_WHEN_GATED = new Set(["availability", "info", "issues"]);
@@ -97,7 +100,9 @@ function AuthScreen({ settings, groups }) {
       <${DictEntry} word="caf·fein·ance" pos="n.">The fine art of knowing exactly how many coffees you owe, without ever having to ask.<//>
     </div>
     <div class="card auth-card">
-    ${api.isDemo && html`<div class="notice"><b>Demo mode.</b> No database is configured; data stays in this browser.
+    ${api.isDemo && html`<div class="notice"><b>Demo mode.</b> ${api.isOnlineDemo
+      ? "Try the app with made-up people. Nothing is sent anywhere, and whatever you change stays in this browser."
+      : "No database is configured; data stays in this browser."}
       <div class="row" style="margin-top:8px">
         <button class="btn small" onClick=${() => run(() => api.auth.signIn("ada@example.org", "x"))}>Sign in as admin</button>
         <button class="btn small" onClick=${() => run(() => api.auth.signIn("clara@example.org", "x"))}>Sign in as group admin</button>
@@ -182,7 +187,7 @@ function Shell({ app }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
-  useEffect(() => { document.title = `${route.title} · ${app.settings.app_name || "Coffee & Drinks"}`; }, [route]);
+  useEffect(() => { document.title = `${titleOf(route, app)} · ${app.settings.app_name || "Coffee & Drinks"}`; }, [route]);
 
   const sections = [...new Set(visible.map((r) => r.section))];
   const Page = route.page;
@@ -208,7 +213,7 @@ function Shell({ app }) {
           ${visible.filter((r) => r.section === s).map((r) => html`
             <a href="#/${r.path}" class="${r === route ? "active" : ""} ${gated && !OPEN_WHEN_GATED.has(r.path) ? "locked" : ""}"
               aria-current=${r === route ? "page" : undefined}>
-              ${r.title}${r.path === "availability" && gated && html`<span class="task-dot" title="Weeks missing"></span>`}</a>`)}`)}
+              ${titleOf(r, app)}${r.path === "availability" && gated && html`<span class="task-dot" title="Weeks missing"></span>`}</a>`)}`)}
       </nav>
       <div class="who">
         <div><b>${app.person ? personName(app.person) : app.profile.email}</b></div>

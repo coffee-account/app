@@ -40,7 +40,7 @@ GitHub Pages (static site: web/)  ──►  Supabase (EU region)
                                         └─ Edge Function "notify": all emails (Resend or SMTP)
 ```
 
-With no Supabase project configured in `web/config.js`, the site runs as a **demo**: fictional sample data stored in your browser. Use it to try everything before setting up.
+With no Supabase project configured in `web/config.js`, the site runs as a **demo**: fictional sample data stored in your browser. Use it to try everything before setting up. Every deploy also publishes this demo next to the live site, under `/demo/` (e.g. `https://<user>.github.io/<repo>/demo/`), so others can try the app without an account; it never talks to the database.
 
 To try it locally:
 
@@ -57,7 +57,7 @@ Then open <http://localhost:8000>. Run it from the project folder. It serves `we
 ### 1. Supabase project
 
 1. Create a free account at <https://supabase.com>, then a new project. Choose region **Central EU (Frankfurt)** for GDPR.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (currently `20261029000000_info_refunds_issues.sql`: Info page, refunds, issue reports, advance payments). Each script only needs to run once per project.
+2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261103000000_payouts.sql`: payouts from PayPal statements). Each script only needs to run once per project.
 3. Under **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 
 ### 2. Email sending

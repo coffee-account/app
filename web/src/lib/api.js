@@ -7,6 +7,7 @@ import { toast } from "./ui.js";
 
 const cfg = window.APP_CONFIG || {};
 export const isDemo = !cfg.supabaseUrl || !cfg.supabaseAnonKey;
+export const isOnlineDemo = isDemo && !!cfg.onlineDemo; // the public copy under /demo/
 
 export const sb = isDemo
   ? createDemoClient((m) => toast(m))
@@ -287,4 +288,38 @@ export async function importPaypal({ payments, aliases, ignored }) {
   }
   if (aliases.length) await q(sb.from("payer_aliases").upsert(aliases, { onConflict: "kind,value" }));
   if (ignored.length) await q(sb.from("ignored_transactions").upsert(ignored, { onConflict: "external_id", ignoreDuplicates: true }));
+}
+
+// ── Payouts (money sent from the PayPal account) ──
+export const listPayouts = () => q(sb.from("payouts").select("*").order("paid_on", { ascending: false }));
+export const deletePayout = (id) => q(sb.from("payouts").delete().eq("id", id));
+
+/**
+ * Records payouts from a PayPal statement.
+ * items: [{ kind: "invoice"|"refund"|"purchase"|"other", paid_on, amount, recipient, external_id, note,
+ *           invoice_id?, person_id?, refund_request_id? }]
+ * Invoice payouts mark the invoice reimbursed; refunds complete the open refund request, or else
+ * record a negative payment on the person's balance.
+ */
+export async function recordPayouts(items) {
+  for (const it of items) {
+    if (it.kind === "invoice" && it.invoice_id) {
+      await q(sb.from("invoices").update({ status: "reimbursed", status_note: `Paid via PayPal on ${it.paid_on}` }).eq("id", it.invoice_id));
+    }
+    if (it.kind === "refund" && it.person_id) {
+      if (it.refund_request_id) {
+        await q(sb.rpc("complete_refund", { request_id: it.refund_request_id, paid_on: it.paid_on, note: "Paid via PayPal" }));
+      } else {
+        await q(sb.from("payments").upsert({
+          person_id: it.person_id, paid_on: it.paid_on, amount: -it.amount, method: "PayPal payout", source: "payout",
+          external_id: it.external_id, payer: it.recipient, note: it.note || null,
+        }, { onConflict: "external_id", ignoreDuplicates: true }));
+      }
+    }
+    await q(sb.from("payouts").upsert({
+      kind: it.kind, paid_on: it.paid_on, amount: it.amount, recipient: it.recipient, external_id: it.external_id,
+      note: it.note || null, invoice_id: it.kind === "invoice" ? it.invoice_id || null : null,
+      person_id: it.kind === "refund" ? it.person_id || null : null,
+    }, { onConflict: "external_id", ignoreDuplicates: true }));
+  }
 }

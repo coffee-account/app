@@ -375,3 +375,4 @@ input[aria-invalid="true"] { border-color: var(--cherry); }
 .startup-notice { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; }
 .update-dialog { max-height: 60vh; overflow-y: auto; margin-top: 8px; }
 .update-dialog .update:first-child { border-top: 0; padding-top: 4px; }
+.payout-what { display: grid; gap: 6px; min-width: 240px; }

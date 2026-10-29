@@ -7,10 +7,14 @@ import { Figures, EmptyState, ReceiptCarrier } from "../lib/drawings.js";
 
 export function PaypalPage() {
   const state = useLoad(async () => {
-    const [people, payments, aliases, ignored] = await Promise.all([api.listPeople(), api.listPayments(), api.listAliases(), api.listIgnored()]);
-    return { people, payments, aliases, ignored };
+    const [people, payments, aliases, ignored, invoices, refunds, payouts, settings] = await Promise.all([
+      api.listPeople(), api.listPayments(), api.listAliases(), api.listIgnored(),
+      api.listInvoices(false), api.listRefunds(false), api.listPayouts(), api.loadSettings(),
+    ]);
+    return { people, payments, aliases, ignored, invoices, refunds, payouts, stored: settings.paypal_balance || null };
   });
   const [statement, setStatement] = useState(null);
+  const [tab, setTab] = useState("in");
   const [fileName, setFileName] = useState("");
   const [inputKey, setInputKey] = useState(0);
 
@@ -28,7 +32,7 @@ export function PaypalPage() {
 
   return html`
     <div class="page-head"><div><h1>PayPal import</h1>
-      <p>Book PayPal payments from a statement download. Known payers are matched for you; nothing is saved until you confirm.</p></div></div>
+      <p>Book incoming payments and payouts from a PayPal statement. Known payers are matched for you; nothing is saved until you confirm.</p></div></div>
     <div class="grid cols-2" style="margin-bottom:8px">
       <label class="upload">
         <span>${fileName || "Choose the PayPal CSV file"}</span>
@@ -44,11 +48,155 @@ export function PaypalPage() {
         </ol>
       </details>
     </div>
-    <${Loading} state=${state}>${(data) => html`<div>
-      ${statement && html`<${Review} key=${fileName} statement=${statement} data=${data}
-        onDone=${() => { state.reload(); }} onClear=${() => { setStatement(null); setFileName(""); setInputKey((k) => k + 1); }} />`}
-      <${Aliases} data=${data} reload=${state.reload} />
-    </div>`}<//>`;
+    <${Loading} state=${state}>${(data) => {
+      // The newest balance in the file becomes the "PayPal balance" on the Balances page when you record something.
+      const newer = statement?.balance && (!data.stored || statement.balance.date >= data.stored.as_of);
+      const saveBalance = async () => {
+        if (newer) await api.saveSetting("paypal_balance", { amount: statement.balance.amount, as_of: statement.balance.date });
+      };
+      const done = async () => { await saveBalance(); state.reload(); };
+      const clear = () => { setStatement(null); setFileName(""); setInputKey((k) => k + 1); };
+      return html`<div>
+        ${statement && html`<div>
+          ${statement.balance && html`<div class="notice ${newer ? "ok" : ""}">
+            PayPal balance in this file: <b>${fmtEUR(statement.balance.amount)}</b> on ${fmtDate(statement.balance.date)}.
+            ${newer ? " It's saved as the current PayPal balance when you record payments or payouts." : " Your saved balance is newer, so it stays."}
+            ${newer && html` <button class="btn-text" onClick=${() => done().then(() => toast("PayPal balance saved"))}>Save balance only</button>`}</div>`}
+          <div class="tabs">
+            <button class=${tab === "in" ? "active" : ""} onClick=${() => setTab("in")}>Incoming payments (${statement.payments.length})</button>
+            <button class=${tab === "out" ? "active" : ""} onClick=${() => setTab("out")}>Payouts (${statement.payouts.length})</button>
+          </div>
+          ${tab === "in"
+            ? html`<${Review} key=${fileName} statement=${statement} data=${data} onDone=${done} onClear=${clear} />`
+            : html`<${PayoutReview} key=${`${fileName}-out`} statement=${statement} data=${data} onDone=${done} onClear=${clear} />`}
+        </div>`}
+        <${Payouts} data=${data} reload=${state.reload} />
+        <${Aliases} data=${data} reload=${state.reload} />
+      </div>`;
+    }}<//>`;
+}
+
+const PAYOUT_KINDS = [
+  ["invoice", "Invoice reimbursement"],
+  ["refund", "Refund to a member"],
+  ["purchase", "Purchase"],
+  ["other", "Other"],
+];
+const PAYOUT_LABEL = Object.fromEntries(PAYOUT_KINDS);
+const near = (a, b) => Math.abs(Number(a) - Number(b)) < 0.005;
+
+/** Outgoing PayPal payments: say what each was for, then record them. */
+function PayoutReview({ statement, data, onDone, onClear }) {
+  const people = useMemo(() => sortPeople(data.people, "last"), [data.people]);
+  const openInvoices = data.invoices.filter((i) => i.status === "submitted");
+  const openRefunds = data.refunds.filter((r) => r.status === "open");
+  const done = useMemo(() => new Set([
+    ...data.payouts.map((p) => p.external_id), ...data.payments.map((p) => p.external_id), ...data.ignored.map((x) => x.external_id),
+  ].filter(Boolean)), [data]);
+
+  // Suggest what each payout was: an open invoice of the same amount, an open refund, or a payment to a member.
+  const rows = useMemo(() => statement.payouts.map((p) => {
+    const inv = openInvoices.filter((i) => near(i.amount, p.amount));
+    const who = matchPayer(p, data.people, data.aliases);
+    const refund = openRefunds.find((r) => near(r.amount, p.amount) && (!who.personId || r.person_id === who.personId));
+    const guess = inv.length === 1 ? { kind: "invoice", invoiceId: inv[0].id, sure: true, why: "an open invoice with the same amount" }
+      : refund ? { kind: "refund", personId: refund.person_id, sure: true, why: "an open refund request with the same amount" }
+      : who.confident ? { kind: "refund", personId: who.personId, sure: false, why: `paid to a member (${who.how})` }
+      : { kind: "purchase", sure: false, why: null };
+    return { ...p, guess, handled: done.has(p.id) };
+  }), [statement, data]);
+  const [choice, setChoice] = useState(() => Object.fromEntries(rows.map((r) => [r.id, {
+    kind: r.guess.kind, invoiceId: r.guess.invoiceId || "", personId: r.guess.personId || "", note: r.note || "", include: r.guess.sure, skip: false,
+  }])));
+  const [busy, run] = useBusy();
+  const set = (id, patch) => setChoice((c) => ({ ...c, [id]: { ...c[id], ...patch } }));
+  const open = rows.filter((r) => !r.handled);
+  const ready = (r) => {
+    const c = choice[r.id];
+    return c.include && !c.skip && (c.kind !== "invoice" || c.invoiceId) && (c.kind !== "refund" || c.personId);
+  };
+  const toRecord = open.filter(ready);
+  const toSkip = open.filter((r) => choice[r.id].skip);
+
+  const save = () => run(async () => {
+    await api.recordPayouts(toRecord.map((r) => {
+      const c = choice[r.id];
+      const request = c.kind === "refund" ? openRefunds.find((x) => x.person_id === c.personId) : null;
+      return {
+        kind: c.kind, paid_on: r.date, amount: r.amount, recipient: [r.name, r.email].filter(Boolean).join(" · "), external_id: r.id,
+        note: c.note, invoice_id: c.invoiceId || null, person_id: c.personId || null, refund_request_id: request?.id || null,
+      };
+    }));
+    if (toSkip.length) await api.importPaypal({ payments: [], aliases: [], ignored: toSkip.map((r) => ({ external_id: r.id, payer: r.name || r.email, amount: -r.amount, paid_on: r.date })) });
+    toast(`${toRecord.length} payout${toRecord.length === 1 ? "" : "s"} recorded (${fmtEUR(toRecord.reduce((n, r) => n + r.amount, 0))})`);
+    onDone();
+  });
+
+  if (!open.length) {
+    return html`<${EmptyState} drawing=${html`<${ReceiptCarrier} size=${110} />`}
+      action=${html`<button class="btn" onClick=${onClear}>Choose another file</button>`}>${rows.length ? "Every payout in this file has already been recorded or skipped." : "No payouts to people in this file."}<//>`;
+  }
+  const invoiceLabel = (i) => `${fmtDate(i.invoice_date)} · ${i.supplier} · ${fmtEUR(i.amount)}${i.submitter_name ? ` · ${i.submitter_name}` : ""}`;
+  return html`<section>
+    <p class="lede" style="margin-bottom:14px">Money sent from the PayPal account. Say what each payout was for: invoice reimbursements mark the invoice as reimbursed,
+      refunds go on the member's balance (and complete their refund request).</p>
+    <div class="table-wrap"><table class="data normal">
+      <thead><tr><th>Date</th><th>To (PayPal)</th><th class="num">Amount</th><th>What was it?</th><th class="center">Record</th><th></th></tr></thead>
+      <tbody>${open.map((r) => {
+        const c = choice[r.id];
+        return html`<tr key=${r.id} class=${c.skip ? "inactive" : ""}>
+          <td>${fmtDate(r.date)}</td>
+          <td>${r.name || "—"}<div class="small muted">${r.email}${r.note ? ` · “${r.note}”` : ""}</div></td>
+          <td class="num">${fmtEUR(r.amount)}</td>
+          <td>${c.skip ? html`<span class="muted">not coffee money</span>` : html`<div class="payout-what">
+            <select aria-label="Kind of payout" value=${c.kind} onChange=${(e) => set(r.id, { kind: e.target.value })}>
+              ${PAYOUT_KINDS.map(([k, l]) => html`<option value=${k}>${l}</option>`)}</select>
+            ${c.kind === "invoice" && html`<select aria-label="Which invoice" value=${c.invoiceId} onChange=${(e) => set(r.id, { invoiceId: e.target.value, include: !!e.target.value })}>
+              <option value="">Which invoice?</option>${openInvoices.map((i) => html`<option value=${i.id}>${invoiceLabel(i)}</option>`)}</select>`}
+            ${c.kind === "refund" && html`<select aria-label="Which member" value=${c.personId} onChange=${(e) => set(r.id, { personId: e.target.value, include: !!e.target.value })}>
+              <option value="">Which member?</option>${people.map((p) => html`<option value=${p.id}>${p.last_name}, ${p.first_name}${openRefunds.some((x) => x.person_id === p.id) ? " · refund requested" : ""}</option>`)}</select>`}
+            ${(c.kind === "purchase" || c.kind === "other") && html`<input aria-label="Note" placeholder="What for? e.g. coffee beans" value=${c.note} onInput=${(e) => set(r.id, { note: e.target.value })} />`}
+            ${r.guess.why && html`<div class="small ${r.guess.sure ? "pos" : "muted"}">${r.guess.sure ? "✓ " : "suggested: "}${r.guess.why}</div>`}
+          </div>`}</td>
+          <td class="center"><input type="checkbox" aria-label="Record this payout" checked=${ready(r)} disabled=${c.skip}
+            onChange=${(e) => set(r.id, { include: e.target.checked })} /></td>
+          <td class="num">${c.skip
+            ? html`<button class="btn-text" onClick=${() => set(r.id, { skip: false })}>Undo</button>`
+            : html`<button class="btn-text" title="Not about the coffee fund; don't offer it again" onClick=${() => set(r.id, { skip: true, include: false })}>Not coffee</button>`}</td>
+        </tr>`;
+      })}</tbody>
+    </table></div>
+    <div class="row save-bar">
+      <span class="small muted">Recording a payout doesn't change anyone's balance, except refunds to members.</span>
+      <span class="spacer"></span>
+      <button class="btn-text" onClick=${onClear}>Cancel</button>
+      <button class="btn primary" disabled=${busy || (!toRecord.length && !toSkip.length)} onClick=${save}>
+        Record ${toRecord.length} payout${toRecord.length === 1 ? "" : "s"} · ${fmtEUR(toRecord.reduce((n, r) => n + r.amount, 0))}</button>
+    </div>
+  </section>`;
+}
+
+function Payouts({ data, reload }) {
+  const isPending = usePendingDeletes();
+  const list = data.payouts.filter((p) => !isPending(`payout:${p.id}`));
+  const person = new Map(data.people.map((p) => [p.id, p]));
+  const invoice = new Map(data.invoices.map((i) => [i.id, i]));
+  const forget = (p) => deferDelete({ key: `payout:${p.id}`, message: "Payout removed from the list", commit: () => api.deletePayout(p.id), onDone: reload });
+  if (!list.length) return null;
+  return html`<section style="margin-top:36px">
+    <h2>Recorded payouts</h2>
+    <p class="lede" style="margin-bottom:12px">Removing a payout here doesn't change the invoice status or a member's balance; correct those on their own pages.</p>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Date</th><th>To</th><th>What</th><th class="num">Amount</th><th></th></tr></thead>
+      <tbody>${list.slice(0, 200).map((p) => html`<tr key=${p.id}>
+        <td>${fmtDate(p.paid_on)}</td><td>${p.recipient || "—"}</td>
+        <td>${PAYOUT_LABEL[p.kind]}${p.kind === "invoice" && invoice.get(p.invoice_id) ? `: ${invoice.get(p.invoice_id).supplier}` : ""}${p.kind === "refund" && person.get(p.person_id) ? `: ${personName(person.get(p.person_id))}` : ""}
+          ${p.note && html`<div class="small muted">${p.note}</div>`}</td>
+        <td class="num">${fmtEUR(p.amount)}</td>
+        <td class="num"><span class="row-actions"><${ConfirmAction} label="Remove" question="Remove this payout from the list?" actions=${[{ label: "Remove", danger: true, onClick: () => forget(p) }]} /></span></td>
+      </tr>`)}</tbody>
+    </table></div>
+  </section>`;
 }
 
 function Review({ statement, data, onDone, onClear }) {

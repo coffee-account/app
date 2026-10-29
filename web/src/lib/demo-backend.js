@@ -94,7 +94,7 @@ const KEYS = {
   count_sessions: ["id"], counts: ["session_id", "person_id"], payments: ["id"], list_templates: ["id"],
   invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"],
   updates: ["id"], refund_requests: ["id"], issues: ["id"],
-  payer_aliases: ["id"], ignored_transactions: ["external_id"],
+  payer_aliases: ["id"], ignored_transactions: ["external_id"], payouts: ["id"],
 };
 const DEFAULTS = {
   people: () => ({ id: uuid(), active_coffee: false, active_drinks: false, starting_balance: 0, created_at: new Date().toISOString() }),
@@ -109,13 +109,14 @@ const DEFAULTS = {
   issues: () => ({ id: uuid(), status: "open", created_at: new Date().toISOString() }),
   payer_aliases: () => ({ id: uuid(), created_at: new Date().toISOString() }),
   ignored_transactions: () => ({ created_at: new Date().toISOString() }),
+  payouts: () => ({ id: uuid(), created_at: new Date().toISOString() }),
 };
 
 class Store {
   constructor() {
     try { this.db = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch { this.db = seed(); }
     // Demo data saved before newer features existed.
-    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions"]) this.db[t] ??= [];
+    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts"]) this.db[t] ??= [];
     this.save();
   }
   save() { try { localStorage.setItem(KEY, JSON.stringify(this.db)); } catch { /* storage unavailable */ } }

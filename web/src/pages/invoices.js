@@ -1,9 +1,10 @@
 import { html, useState, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
-import { EmptyState, ReceiptCarrier } from "../lib/drawings.js";
+import { EmptyState, ReceiptCarrier, Figures } from "../lib/drawings.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { personName } from "../lib/accounting.js";
 import { isoDate, fmtDate } from "../lib/dates.js";
+import { paypalFigure } from "./balances.js";
 
 const MAX_BYTES = 10 * 1024 * 1024;
 const STATUS_BADGE = { submitted: "", reimbursed: "ok", rejected: "bad" };
@@ -14,11 +15,14 @@ export function InvoicesPage() {
   const [scope, setScope] = useState(app.isAdmin ? "all" : "mine");
   const state = useLoad(() => api.listInvoices(scope === "mine", app.user.id), [scope]);
   const to = app.settings.reimbursement?.to;
+  // What's in the PayPal account that invoices are paid from (from the last statement import).
+  const paypal = useLoad(async () => (await api.loadSettings()).paypal_balance || null);
 
   return html`
     <div class="page-head"><div><h1>Invoices</h1>
       <p>Get money back for something you bought for the kitchen, or ask for it in advance; ${app.isAdmin && to ? `${to} gets an e-mail.` : "the accounting contact gets an e-mail."}</p></div></div>
     ${app.isAdmin && !to && html`<div class="notice warn">No reimbursement address is set yet, so no e-mail can go out. <a href="#/settings">Set it in Settings →</a></div>`}
+    ${!paypal.loading && !paypal.error && html`<${Figures} items=${[paypalFigure(paypal.data, app.isAdmin)]} />`}
     <${SubmitForm} app=${app} onDone=${state.reload} />
     <div class="row" style="margin:32px 0 14px"><h2 style="margin:0">${scope === "all" ? "All invoices" : "My invoices"}</h2><span class="spacer"></span>
       ${app.isAdmin && html`<div class="seg" role="group" aria-label="Show">
