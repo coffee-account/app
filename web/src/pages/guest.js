@@ -31,8 +31,8 @@ export function GuestAvailabilityPage({ groups, appName }) {
     <div class="card auth-card guest-card">
       <h1>Kitchen-duty availability</h1>
       ${result ? html`<${Done} result=${result} first=${form.first} />` : html`
-      <p class="lede">For the ${appName} kitchen duty. No account needed: tell us who you are and which weeks suit you.
-        <a href="#/signin">Have an account? Sign in instead.</a></p>
+      <p class="lede">For the ${appName} kitchen duty. No account needed: tell us who you are and which weeks
+        suit you. <a href="#/signin">Have an account? Sign in instead.</a></p>
       <${Loading} state=${info}>${({ weeks_ahead: ahead, free_weeks: free }) => {
         const freeSet = new Set(free);
         const weeks = weeksFrom(Number(ahead) || 6).filter((w) => !freeSet.has(w));
@@ -55,7 +55,7 @@ export function GuestAvailabilityPage({ groups, appName }) {
               </div>
             </div>`;
           })}</div>
-          <p class="small muted">Weeks you have already answered before aren't changed here. To change them, sign in.</p>
+          <p class="small muted">If you answered a week before, your new answer replaces it.</p>
           <button class="btn primary" disabled=${busy}>Send my availability</button>
         </form>`;
       }}<//>`}
@@ -66,10 +66,7 @@ export function GuestAvailabilityPage({ groups, appName }) {
 function Done({ result, first }) {
   return html`<div class="grid">
     <div class="notice ok">${result.matched
-      ? html`Thanks, ${first}! ${result.filled
-        ? `${result.filled} week${result.filled > 1 ? "s were" : " was"} added to your availability.`
-        : "You had already answered these weeks, so nothing changed."}
-        ${result.filled < result.answered && result.filled > 0 ? " Weeks you had already answered stay as they were." : ""}`
+      ? html`Thanks, ${first}! Your availability for ${result.saved} week${result.saved === 1 ? " is" : "s is"} saved.`
       : html`Thanks, ${first}! We couldn't find you on the list yet, so a duty manager will connect your answers to you.`}</div>
     ${result.has_account ? html`<div class="card" style="margin:0">
       <h2 style="margin-top:0">You already have an account</h2>

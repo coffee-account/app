@@ -277,7 +277,7 @@ function GuestQr({ onClose }) {
   const copy = () => navigator.clipboard.writeText(link).then(() => toast("Link copied"), () => toast(link));
   return html`<${Modal} title="Availability without an account" onClose=${onClose}>
     <p class="lede" style="margin:4px 0 14px">Anyone can scan this to fill in their kitchen-duty availability with their name and group.
-      Answers only fill in weeks they haven't answered yet; names the app doesn't know wait here for you to connect.</p>
+      Their answers replace earlier ones for the same weeks; names the app doesn't know wait here for you to connect.</p>
     <div class="qr-box">
       ${svg ? html`<div dangerouslySetInnerHTML=${{ __html: svg }} />` : html`<p class="muted">Creating QR code…</p>`}
       <code class="small" style="word-break:break-all">${link}</code>
@@ -312,7 +312,7 @@ function GuestQueue({ data, app, reload }) {
   const dismiss = (g) => run(async () => { await api.dismissGuestAvailability(g.id); reload(); });
   return html`<div class="card">
     <h2>Guest answers to connect (${data.guests.length})</h2>
-    <p class="small muted">Sent with the QR-code form under names the app doesn't know (yet). Connecting fills in only weeks the person hasn't answered.</p>
+    <p class="small muted">Sent with the QR-code form under names the app doesn't know (yet). Connecting saves these answers, except for weeks the person has changed since.</p>
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name given</th><th>Sent</th><th class="num">Weeks</th><th>Person</th><th></th></tr></thead>
       <tbody>${data.guests.map((g) => {

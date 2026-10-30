@@ -26,8 +26,8 @@ export function HomePage() {
     return html`<div class="greeting"><div><h1>Welcome</h1>
         <p class="lede">${app.profile.suggested_person_id
           ? "Your account is waiting for an admin to connect it to your entry on the coffee list."
-          : "Your account isn't connected to an entry on the coffee list yet. An admin will do this for you."}
-        Until then there is no balance to show.</p></div></div>
+          : "Your account isn't connected to an entry on the coffee list yet. An admin will do this for you."} Until then
+        there is no balance to show.</p></div></div>
       <${EmptyState} drawing=${html`<${LayeredCup} size=${130} />`}>Your balance and history will appear here once your account is connected.<//>`;
   }
 

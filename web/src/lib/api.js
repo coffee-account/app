@@ -153,10 +153,14 @@ export const submitGuestAvailability = (first_name, last_name, group_name, answe
   q(sb.rpc("submit_guest_availability", { first_name, last_name, group_name, answers }));
 export const listGuestAvailability = () => q(sb.from("guest_availability").select("*").eq("status", "pending").order("created_at"));
 export const dismissGuestAvailability = (id) => q(sb.from("guest_availability").update({ status: "dismissed" }).eq("id", id));
-/** Gives a waiting guest's answers to a person; weeks they already answered stay as they are. */
+/** Gives a waiting guest's answers to a person. They replace older answers, but not ones changed after the form was sent. */
 export async function connectGuestAvailability(g, personId) {
-  const rows = g.answers.map((a) => ({ person_id: personId, week_start: a.week, status: a.status, note: a.note || null }));
-  if (rows.length) await q(sb.from("availability").upsert(rows, { onConflict: "person_id,week_start", ignoreDuplicates: true }));
+  const weeks = g.answers.map((a) => a.week);
+  const existing = weeks.length ? await q(sb.from("availability").select("week_start, updated_at").eq("person_id", personId).in("week_start", weeks)) : [];
+  const newer = new Set(existing.filter((x) => x.updated_at && x.updated_at > g.created_at).map((x) => x.week_start));
+  const rows = g.answers.filter((a) => !newer.has(a.week))
+    .map((a) => ({ person_id: personId, week_start: a.week, status: a.status, note: a.note || null, updated_at: new Date().toISOString() }));
+  if (rows.length) await q(sb.from("availability").upsert(rows, { onConflict: "person_id,week_start" }));
   await q(sb.from("guest_availability").update({ status: "applied", person_id: personId }).eq("id", g.id));
 }
 export const setDutyTarget = (person, target) => q(sb.rpc("set_duty_target", { person, target }));

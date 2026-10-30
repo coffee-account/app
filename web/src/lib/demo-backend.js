@@ -332,17 +332,17 @@ export function createDemoClient(notify) {
         let hits = store.db.people.filter((p) => (key(p.first_name) === key(f) && key(p.last_name) === key(l)) || (key(p.first_name) === key(l) && key(p.last_name) === key(f)));
         if (hits.length > 1) hits = hits.filter((p) => (p.group_name || null) === g);
         const pid = hits.length === 1 ? hits[0].id : null;
-        let filled = 0;
+        let saved = 0;
         if (pid) {
           for (const a of args.answers) {
-            if (store.db.availability.some((x) => x.person_id === pid && x.week_start === a.week)) continue;
-            store.db.availability.push({ person_id: pid, week_start: a.week, status: a.status, note: a.note || null });
-            filled++;
+            store.db.availability = store.db.availability.filter((x) => !(x.person_id === pid && x.week_start === a.week));
+            store.db.availability.push({ person_id: pid, week_start: a.week, status: a.status, note: a.note || null, updated_at: new Date().toISOString() });
+            saved++;
           }
         }
         store.db.guest_availability.push({ ...DEFAULTS.guest_availability(), first_name: f, last_name: l, group_name: g, answers: args.answers, person_id: pid, status: pid ? "applied" : "pending" });
         store.save();
-        return { data: { matched: !!pid, filled, has_account: !!pid && store.db.profiles.some((x) => x.person_id === pid) }, error: null };
+        return { data: { matched: !!pid, saved, has_account: !!pid && store.db.profiles.some((x) => x.person_id === pid) }, error: null };
       }
       if (name === "set_duty_target") {
         const round = Number(store.db.settings.find((s) => s.key === "duty")?.value?.round ?? 0);

@@ -71,8 +71,8 @@ function WorkbookImport() {
           <ul>${r.unknownRows.map((x) => html`<li>${x}</li>`)}</ul>Fix the spelling in the spreadsheet (or add them to People) and choose the file again.</div>`}
         ${r.groupMerges.length > 0 && html`<div class="notice info"><b>Group spellings merged:</b> ${r.groupMerges.join("; ")}</div>`}
         ${r.warnings.map((w) => html`<div class="notice warn small">${w}</div>`)}
-        ${r.balanceDiffs.length > 0 ? html`<div class="notice warn"><b>${r.balanceDiffs.length} balances differ from the spreadsheet's Balance sheet.</b>
-            The app recalculates everything from the raw sheets with one consistent formula, so differences usually point at inconsistent formulas in the old Balance sheet.</div>
+        ${r.balanceDiffs.length > 0 ? html`<div class="notice warn"><b>${r.balanceDiffs.length} balances differ from the spreadsheet's Balance sheet.</b> The app
+            recalculates everything from the raw sheets with one consistent formula, so differences usually point at inconsistent formulas in the old Balance sheet.</div>
           <div class="table-wrap" style="max-height:320px;overflow-y:auto"><table class="data">
             <thead><tr><th>Person</th><th class="num">Old sheet</th><th class="num">Recalculated</th><th class="num">Difference</th></tr></thead>
             <tbody>${r.balanceDiffs.map((d) => html`<tr><td>${d.name}</td><td class="num">${fmtEUR(d.sheet)}</td><td class="num">${fmtEUR(d.computed)}</td>
@@ -171,8 +171,8 @@ function DutySheetImport() {
           <label class="check"><input type="checkbox" checked=${opts.keepAnswers} onChange=${(e) => setOpts({ ...opts, keepAnswers: e.target.checked })} />
             Keep availability people already gave in the app (the sheet only fills in weeks they haven't answered)</label>
           ${plan.outside.length > 0 && html`<label class="check"><input type="checkbox" checked=${opts.onlySheet} onChange=${(e) => setOpts({ ...opts, onlySheet: e.target.checked })} />
-            <span>Only people in the sheet are in the duty pool. ${plan.outside.length} other${plan.outside.length > 1 ? "s" : ""} leave it:
-              <span class="muted">${plan.outside.map(personName).join(", ")}</span></span></label>`}
+            <span>Only people in the sheet are in the duty pool. ${plan.outside.length} other${plan.outside.length > 1 ? "s" : ""} leave
+              it: <span class="muted">${plan.outside.map(personName).join(", ")}</span></span></label>`}
           ${sheet.freeWeeks.length > 0 && html`<label class="check"><input type="checkbox" checked=${opts.freeWeeks} onChange=${(e) => setOpts({ ...opts, freeWeeks: e.target.checked })} />
             No kitchen duty in the weeks the sheet skips: ${sheet.freeWeeks.map(fmtDate).join(", ")}</label>`}
         </div>
