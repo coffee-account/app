@@ -341,6 +341,17 @@ function BoxSize({ cfg, set, cols, rows, people, picked, setPicked }) {
   </div>`;
 }
 
+// Browsers can be set to a minimum font size (Chrome uses 12 px = 9 pt by default in some languages), which
+// would show every smaller size the same. Small text is therefore drawn at 10 pt and scaled down to its size;
+// the negative margins give back the extra height, so the row keeps its height.
+const SMALL_PT = 10;
+function SmallText({ size, text }) {
+  const k = SMALL_PT / size;
+  const lines = String(text).split("\n").length;
+  const extra = ((k - 1) * lines * 1.15 * size) / 2; // pt above and below
+  return html`<span class="small-text" style=${`font-size:${SMALL_PT}pt;transform:scale(${1 / k});margin:${-extra}pt 0`}>${text}</span>`;
+}
+
 function Paper({ cfg, cols, rows, first, date, zoom, picked, onPick }) {
   const [w, h] = PAGE[cfg.orientation];
   const m = cfg.margins;
@@ -370,7 +381,7 @@ function Paper({ cfg, cols, rows, first, date, zoom, picked, onPick }) {
             class="${merged && blockFive ? "five" : ""} ${duty ? "duty" : ""} ${pickable ? "pickable" : ""} ${isPicked ? "picked" : ""}"
             title=${pickable ? "Click to change this box's font size" : undefined}
             onClick=${pickable ? (e) => onPick(cellKey(r.pid, cols[j]), e.metaKey || e.ctrlKey || e.shiftKey) : undefined}
-            style=${size && size !== Number(cfg.fontSize) ? `font-size:${size}pt` : undefined}>${v}</td>`;
+            style=${size && size !== Number(cfg.fontSize) ? `font-size:${size}pt` : undefined}>${size < SMALL_PT && v ? html`<${SmallText} size=${size} text=${v} />` : v}</td>`;
         })}</tr>`;
       })}</tbody>
     </table>

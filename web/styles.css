@@ -387,3 +387,4 @@ input[aria-invalid="true"] { border-color: var(--cherry); }
 .paper table.list td.pickable { cursor: pointer; }
 .paper table.list td.pickable:hover { outline: 1.5px dashed var(--ink-mute); outline-offset: -2px; }
 .paper table.list td.picked { outline: 2px solid var(--cherry); outline-offset: -2px; }
+.paper table.list .small-text { display: inline-block; line-height: 1.15; transform-origin: 0 50%; white-space: inherit; vertical-align: middle; }
