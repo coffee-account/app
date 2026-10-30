@@ -253,11 +253,13 @@ tr:hover .row-actions, tr:focus-within .row-actions { opacity: 1; }
 .week-grid { display: grid; gap: 8px; }
 .week-row { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: 10px 16px; align-items: center; padding: 12px 16px; border: 1px solid var(--rule-soft); border-radius: 12px; background: var(--cup); }
 .week-row.missing { border-left: 3px solid var(--cherry); }
+.week-row.free { background: var(--tint); }
 .week-row .missing-word { color: var(--cherry); font-size: 12px; font-weight: 600; }
 @media (max-width: 560px) { .week-row { grid-template-columns: 1fr; } }
 /* Explicit sizes: some browsers ignore min-width on table cells and would squeeze the name column. */
 table.data.matrix { width: max-content; min-width: 100%; }
 .matrix th.week, .matrix td.week { text-align: center; padding: 0 4px; }
+.matrix td.free { color: var(--ink-mute); background: var(--tint); }
 .matrix .wk { display: inline-block; width: 40px; }
 .matrix th.week small { display: block; font-weight: 400; letter-spacing: 0; text-transform: none; font-size: 11px; }
 .matrix .name-cell { width: 220px; white-space: normal; line-height: 1.25; padding: 6px 0; }
@@ -300,7 +302,7 @@ table.data.matrix { width: max-content; min-width: 100%; }
 .paper table.list th, .paper table.list td { border: 0.5pt solid #000; padding: 0 1.2mm; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .paper table.list th { font-weight: 800; text-align: left; border-bottom: 1.5pt solid #000; white-space: normal; line-height: 1.1; padding-top: .6mm; padding-bottom: .6mm; }
 .paper table.list tr.five td, .paper table.list td.five { border-bottom: 1pt solid #000; }
-.paper table.list td.duty { white-space: pre-line; line-height: 1.1; vertical-align: middle; }
+.paper table.list td.duty { white-space: pre; line-height: 1.1; vertical-align: middle; }
 .paper table.list th.tally { text-align: center; padding: 0; text-overflow: clip; letter-spacing: -.02em; }
 .paper .list-date { position: absolute; font-family: "Schibsted Grotesk", Arial, sans-serif; }
 .paper { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
@@ -376,3 +378,4 @@ input[aria-invalid="true"] { border-color: var(--cherry); }
 .update-dialog { max-height: 60vh; overflow-y: auto; margin-top: 8px; }
 .update-dialog .update:first-child { border-top: 0; padding-top: 4px; }
 .payout-what { display: grid; gap: 6px; min-width: 240px; }
+.target-input { width: 64px; text-align: right; padding: 2px 6px; height: 28px; }

@@ -39,7 +39,7 @@ const ROUTES = [
   { path: "people", title: "People", page: PeoplePage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "accounts", title: (a) => (a.isAdmin ? "Accounts & roles" : "Accounts"), page: AccountsPage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "settings", title: "Settings", page: SettingsPage, section: "ADMIN", show: (a) => a.isAdmin },
-  { path: "import", title: "Import spreadsheet", page: ImportPage, section: "ADMIN", show: (a) => a.isAdmin },
+  { path: "import", title: "Import spreadsheets", page: ImportPage, section: "ADMIN", show: (a) => a.isAdmin },
 ];
 
 // A route's title may depend on who is signed in.
@@ -282,8 +282,8 @@ function App() {
       let availabilityMissing = [];
       if (availabilityRequired(settings, person)) {
         const weeks = weeksFrom(availabilityRules(settings).weeksAhead);
-        const rows = await api.listAvailability(weeks[0], weeks[weeks.length - 1], person.id);
-        availabilityMissing = missingAvailability(settings, rows);
+        const [rows, freeWeeks] = await Promise.all([api.listAvailability(weeks[0], weeks[weeks.length - 1], person.id), api.listDutyFreeWeeks()]);
+        availabilityMissing = missingAvailability(settings, rows, freeWeeks);
       }
       const isAdmin = profile.role === "admin";
       const isGroupAdmin = profile.role === "group_admin" && !!profile.managed_group;

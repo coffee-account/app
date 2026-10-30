@@ -80,15 +80,41 @@ export function availabilityRules(settings) {
   return { weeksAhead: Number(a.weeks_ahead ?? 6), requiredFor: a.required_for || "active" };
 }
 
+/** Everyone in the kitchen-duty pool answers (or every connected account, if set so). */
 export function availabilityRequired(settings, person) {
   if (!person) return false;
   const { requiredFor } = availabilityRules(settings);
-  return requiredFor === "all" || person.active_coffee || person.active_drinks;
+  return requiredFor === "all" || !!person.active_duty;
 }
 
-/** Weeks (Mondays) in the mandatory window the person has not answered yet. */
-export function missingAvailability(settings, rows) {
+/** Weeks (Mondays) in the mandatory window the person has not answered yet; weeks without duty don't count. */
+export function missingAvailability(settings, rows, freeWeeks = []) {
   const { weeksAhead } = availabilityRules(settings);
-  const filled = new Set(rows.map((r) => r.week_start));
+  const filled = new Set([...rows.map((r) => r.week_start), ...freeWeeks.map((f) => f.week_start ?? f)]);
   return weeksFrom(weeksAhead, mondayOf()).filter((w) => !filled.has(w));
 }
+
+// ── Kitchen-duty rounds ──
+// Every round, each person in the pool does one duty. Someone who joined later owes only the rounds
+// since then: target = round − rounds before joining. Done = duties before the app + past weeks;
+// scheduled = this week and later. Owed is what's left, counting scheduled duties as covered.
+
+export const dutyRound = (settings) => Number(settings.duty?.round ?? 0);
+
+export function dutyStats(people, duties, round, thisWeek = mondayOf()) {
+  const past = new Map();
+  const ahead = new Map();
+  for (const d of duties) {
+    const m = d.week_start < thisWeek ? past : ahead;
+    m.set(d.person_id, (m.get(d.person_id) || 0) + 1);
+  }
+  return new Map(people.map((p) => {
+    const target = Math.max(0, round - Number(p.duty_rounds_before || 0));
+    const done = Number(p.duty_carryover || 0) + (past.get(p.id) || 0);
+    const scheduled = ahead.get(p.id) || 0;
+    return [p.id, { target, done, scheduled, owed: target - done - scheduled }];
+  }));
+}
+
+/** Badge tone for "owed", as coloured in the old sheet: 1 due, 2 behind, 3+ far behind. */
+export const owedTone = (owed) => (owed >= 3 ? "bad neg" : owed === 2 ? "warn" : owed === 1 ? "ok" : "");

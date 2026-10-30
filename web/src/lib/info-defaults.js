@@ -17,7 +17,7 @@ Everyone who drinks coffee or drinks from the kitchen is on a paper list next to
 Top up your balance whenever it gets low; you'll see a warning in the app below **{low_threshold}**. Payments are entered by the accounting manager, so it can take a few days until they show up.
 
 ## Kitchen duty
-Everyone on a list takes turns keeping the kitchen usable, one week at a time, usually two people per week.
+Everyone in the kitchen-duty pool takes turns keeping the kitchen usable, one week at a time, usually two people per week. It works in rounds: each round, everyone does one duty; people who joined later only owe the rounds since.
 - Keep your availability for the next **{weeks_ahead} weeks** filled in under **My availability**. It is required, and you'll get a reminder e-mail when weeks are missing.
 - You get an e-mail when you're assigned, and a reminder at the start of your week.
 - During your week: empty and refill the dishwasher, wipe the counters and the table, descale and clean the coffee machine, take out paper and bottles, and check milk and coffee beans.
@@ -39,7 +39,8 @@ Questions about your balance or the lists: the accounting manager. Kitchen duty:
 export const DEFAULT_ADMIN_INFO = `## Regular routine
 **Every week**
 - Check new **Issues** and make sure someone takes care of them.
-- Look at **Kitchen duty → Availability overview** and assign the coming weeks.
+- Look at **Kitchen duty → Availability overview** and assign the coming weeks; the Assign dialog puts whoever owes the most duties first.
+- When **Kitchen duty → Rounds** says everyone has done their share, start the next round there.
 
 **When a paper list is full (every 6–8 weeks)**
 1. Collect the coffee and drinks lists and print new ones under **Print lists** (set the list date to today).

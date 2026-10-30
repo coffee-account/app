@@ -144,6 +144,11 @@ export const listDuties = (from, to) =>
   q(sb.from("duty_assignments").select("*").gte("week_start", from).lte("week_start", to).order("week_start"));
 export const listAllDuties = () => q(sb.from("duty_assignments").select("*"));
 
+export const listDutyFreeWeeks = () => q(sb.from("duty_free_weeks").select("*").order("week_start"));
+export const setDutyFree = (week_start, note) => q(sb.from("duty_free_weeks").upsert({ week_start, note: note || null }, { onConflict: "week_start" }));
+export const setDutyTarget = (person, target) => q(sb.rpc("set_duty_target", { person, target }));
+export const clearDutyFree = (week_start) => q(sb.from("duty_free_weeks").delete().eq("week_start", week_start));
+
 export async function assignDuty(week_start, person_id, note) {
   const [row] = await q(sb.from("duty_assignments").insert({ week_start, person_id, note: note || null }).select());
   const res = await sb.functions.invoke("notify", { body: { type: "duty_assigned", assignment_ids: [row.id] } });
@@ -207,6 +212,38 @@ export const deleteTemplate = (id) => q(sb.from("list_templates").delete().eq("i
 
 // ── Misc ──
 export const importWorkbook = (payload) => q(sb.rpc("import_workbook", { payload }));
+
+/**
+ * Applies a kitchen-duty sheet import (built on the Import page). Safe to repeat: assignments and
+ * no-duty weeks are only added, availability answers given in the app are kept when keepAnswers is set.
+ * plan: { groups: [name], create: [{ key, person, history }], update: [{ id, patch, history }], freeWeeks, round }
+ * history: { done: [week], scheduled: [week], answers: [{ week, status }] }
+ */
+export async function importDutySheet(plan, { keepAnswers = true } = {}) {
+  if (plan.groups.length) await q(sb.from("groups").upsert(plan.groups.map((name) => ({ name })), { onConflict: "name", ignoreDuplicates: true }));
+  const withIds = [];
+  for (const c of plan.create) {
+    const [row] = await q(sb.from("people").insert(c.person).select());
+    withIds.push({ id: row.id, history: c.history });
+  }
+  for (const u of plan.update) {
+    await q(sb.from("people").update(u.patch).eq("id", u.id));
+    withIds.push(u);
+  }
+  const duties = withIds.flatMap(({ id, history }) => [...history.done, ...history.scheduled].map((week_start) => ({ week_start, person_id: id })));
+  const answers = withIds.flatMap(({ id, history }) => history.answers.map((a) => ({ person_id: id, week_start: a.week, status: a.status })));
+  const chunks = (rows, n = 500) => Array.from({ length: Math.ceil(rows.length / n) }, (_, i) => rows.slice(i * n, i * n + n));
+  for (const c of chunks(duties)) await q(sb.from("duty_assignments").upsert(c, { onConflict: "week_start,person_id", ignoreDuplicates: true }));
+  for (const c of chunks(answers)) await q(sb.from("availability").upsert(c, { onConflict: "person_id,week_start", ignoreDuplicates: keepAnswers }));
+  if (plan.freeWeeks.length) {
+    await q(sb.from("duty_free_weeks").upsert(plan.freeWeeks.map((week_start) => ({ week_start })), { onConflict: "week_start", ignoreDuplicates: true }));
+  }
+  if (plan.round != null) {
+    const settings = await loadSettings();
+    await saveSetting("duty", { ...settings.duty, round: plan.round });
+  }
+  return { people: withIds.length, created: plan.create.length, duties: duties.length, answers: answers.length };
+}
 export async function invitePerson(person_id) {
   const res = await sb.functions.invoke("notify", { body: { type: "invite", person_id } });
   if (res.error) throw new Error(await errorMessage(res.error));

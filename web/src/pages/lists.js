@@ -1,8 +1,8 @@
-import { html, useState, useRef, useLoad, Loading, Field, toast, useBusy, downloadBlob, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useRef, useEffect, useLoad, Loading, Field, toast, useBusy, downloadBlob, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import * as api from "../lib/api.js";
 import { sortPeople } from "../lib/accounting.js";
 import { isoDate, addDays } from "../lib/dates.js";
-import { defaultConfig, normalizeConfig, buildRows, paginate, listTitle, exportDocx, PAGE, listPeople, shadeColor, headerTintColor, runLines, runsText, dutyFontSize } from "../lib/listgen.js";
+import { defaultConfig, normalizeConfig, buildRows, paginate, listTitle, exportDocx, PAGE, listPeople, shadeColor, headerTintColor, runLines, runsText, cellFontSize, MIN_FIT_SIZE } from "../lib/listgen.js";
 import { RichText } from "../lib/richtext.js";
 
 export function ListsPage() {
@@ -182,6 +182,8 @@ function DesignerBody({ kind, data, reload }) {
         <div class="row" style="margin:10px 0">
           <label class="check"><input type="checkbox" checked=${cfg.showGroup} onChange=${(e) => set({ showGroup: e.target.checked })} /> Group column</label>
           <label class="check"><input type="checkbox" checked=${cfg.fiveLines} onChange=${(e) => set({ fiveLines: e.target.checked })} /> Heavier line after every 5 people</label>
+          <label class="check" title="Long names and duty dates get a smaller font instead of being cut off"><input type="checkbox" checked=${cfg.fitText}
+            onChange=${(e) => set({ fitText: e.target.checked })} /> Shrink text to fit its box</label>
         </div>
         <div class="form-grid" style="margin-bottom:10px">
           <${Field} label="Header row grey (%)"><input type="number" min="0" max="30" value=${cfg.headerTint} onInput=${(e) => set({ headerTint: num(e) })} /><//>
@@ -282,6 +284,19 @@ function TextStyle({ cfg, set, prefix }) {
 }
 
 function Paper({ cfg, cols, rows, first, date, zoom }) {
+  const table = useRef(null);
+  // Safety net for "fit text": any cell still wider than its box gets smaller in half points until it fits.
+  useEffect(() => {
+    if (!cfg.fitText || !table.current) return;
+    for (const td of table.current.querySelectorAll("tbody td[data-size]")) {
+      let size = Number(td.dataset.size);
+      td.style.fontSize = `${size}pt`;
+      while (td.scrollWidth > td.clientWidth && size > MIN_FIT_SIZE) {
+        size -= 0.5;
+        td.style.fontSize = `${size}pt`;
+      }
+    }
+  });
   const [w, h] = PAGE[cfg.orientation];
   const m = cfg.margins;
   const shade = shadeColor(cfg);
@@ -292,7 +307,7 @@ function Paper({ cfg, cols, rows, first, date, zoom }) {
       style=${`width:${cfg.image.widthMm}mm;top:${m.top}mm;${cfg.image.position === "left" ? "left" : "right"}:${m.side}mm`} />`}
     ${first && title && html`<div class="list-title" style=${`font-size:${cfg.titleSize}pt`}>${title}</div>`}
     ${first && runsText(cfg.intro) && html`<div class="list-intro" style=${`font-size:${cfg.introSize}pt;text-align:${cfg.introAlign};${cfg.image ? `margin-${cfg.image.position}:${cfg.image.widthMm + 3}mm;min-height:${Math.max(0, (cfg.image.heightMm || 0) - cfg.titleSize * 0.46)}mm` : ""}`}><${Runs} value=${cfg.intro} /></div>`}
-    <table class="list" style=${`font-size:${cfg.fontSize}pt;width:${cols.reduce((s, c) => s + c.width, 0)}mm`}>
+    <table class="list" ref=${table} style=${`font-size:${cfg.fontSize}pt;width:${cols.reduce((s, c) => s + c.width, 0)}mm`}>
       <colgroup>${cols.map((c) => html`<col style=${`width:${c.width}mm`} />`)}</colgroup>
       <thead><tr style=${`height:${cfg.rowHeight}mm`}>${cols.map((c) => html`<th class=${c.tally ? "tally" : ""}
         style=${`font-size:${cfg.headerSize}pt${Number(cfg.headerTint) > 0 ? `;background:${headerTintColor(cfg)}` : ""}`}>${c.label}</th>`)}</tr></thead>
@@ -303,8 +318,9 @@ function Paper({ cfg, cols, rows, first, date, zoom }) {
           if (v === null) return null;
           const merged = !cols[j].tally && r.span > 1;
           const duty = cols[j].fill === "duties";
+          const size = cols[j].tally ? null : cellFontSize(cfg, cols[j], v, merged ? r.span : 1);
           return html`<td rowspan=${merged ? r.span : undefined} class="${merged && blockFive ? "five" : ""} ${duty ? "duty" : ""}"
-            style=${duty ? `font-size:${dutyFontSize(cfg)}pt` : undefined}>${v}</td>`;
+            data-size=${size && v ? size : undefined} style=${size ? `font-size:${size}pt` : undefined}>${v}</td>`;
         })}</tr>`;
       })}</tbody>
     </table>

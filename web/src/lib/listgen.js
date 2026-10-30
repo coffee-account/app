@@ -4,6 +4,7 @@ import { sortPeople } from "./accounting.js";
 import { isoWeek, isoDate, mondayOf, parseDate } from "./dates.js";
 
 export const PAGE = { portrait: [210, 297], landscape: [297, 210] }; // mm
+export const PRINT_FONTS = { title: "Fraunces", text: "Newsreader", data: "Schibsted Grotesk" };
 
 const PAYPAL_ADDRESS = "ecker@cs.uni-goettingen.de";
 const LINK_BLUE = "#1f4e79"; // the blue swatch in the text editor
@@ -35,6 +36,7 @@ export function defaultConfig(kind) {
     headerTint: 10, // % grey of the table header row
     fiveLines: true, // heavier line after every fifth person, so people stay in their row
     wordArial: false, // use Arial in the Word file instead of the Playfulcrema fonts
+    fitText: true, // shrink the font of a cell whose text wouldn't fit its box
     sortBy: "group",
     showGroup: true,
     shading: "none", // "none" | "people" (alternate people) | "groups" (alternate groups)
@@ -155,6 +157,40 @@ function dutyText(personId, duties, fromDate) {
 /** Duty cells use a smaller font so two weeks fit in one row. */
 export const dutyFontSize = (cfg) => Math.max(6, Math.round(cfg.fontSize * 0.8 * 2) / 2);
 
+const PT = 0.3528; // mm per point
+let measureCtx;
+const emWidth = new Map(); // "font|text" → width in em
+document.fonts?.ready.then(() => emWidth.clear()); // widths measured before the web fonts arrived are off
+function textEm(text, family) {
+  const key = `${family}|${text}`;
+  if (!emWidth.has(key)) {
+    measureCtx ??= document.createElement("canvas").getContext("2d");
+    measureCtx.font = `100px "${family}", Arial, sans-serif`;
+    emWidth.set(key, measureCtx.measureText(text).width / 100);
+  }
+  return emWidth.get(key);
+}
+
+export const MIN_FIT_SIZE = 2; // pt
+
+/**
+ * Font size (pt) for a table cell: the normal size, or smaller (in half points, down to 2 pt) when
+ * "fit text" is on and the text would be wider than the cell or have more lines than fit its height.
+ * Widths are measured with the wider of the print font and Arial, which Word falls back to when the
+ * print font isn't installed, so the text stays on one line there too.
+ */
+export function cellFontSize(cfg, c, text, span = 1) {
+  const base = c.fill === "duties" ? dutyFontSize(cfg) : Number(cfg.fontSize);
+  if (!cfg.fitText || !text) return base;
+  const lines = String(text).split("\n");
+  const em = (l) => Math.max(textEm(l, cfg.wordArial ? "Arial" : PRINT_FONTS.data), textEm(l, "Arial"));
+  const width = c.width - 3.2; // cell padding on both sides, plus room for differences between renderers
+  const widest = Math.max(...lines.map(em)) * 1.06;
+  const byWidth = widest > 0 ? width / (widest * PT) : base;
+  const byHeight = (cfg.rowHeight * span - 0.8) / (lines.length * 1.15 * PT);
+  return Math.max(MIN_FIT_SIZE, Math.min(base, Math.floor(Math.min(byWidth, byHeight) * 2) / 2));
+}
+
 /**
  * Table rows. A person may span several rows: their name/group/extra cells are on the first row
  * (`span` rows high) and continuation rows (`cont`) only have tally cells.
@@ -198,7 +234,6 @@ export function buildRows(kind, people, cfg, duties = [], fromDate = isoDate()) 
   return { cols, rows };
 }
 
-export const PRINT_FONTS = { title: "Fraunces", text: "Newsreader", data: "Schibsted Grotesk" };
 
 export function headerTintColor(cfg) {
   const v = Math.round(255 * (1 - Math.max(0, Math.min(30, Number(cfg.headerTint) || 0)) / 100));
@@ -283,7 +318,7 @@ export async function exportDocx(kind, cfg, cols, rows, date) {
       alignment: head && c.tally ? d.AlignmentType.CENTER : d.AlignmentType.LEFT,
       children: [new d.TextRun({
         text: part, bold: head, font: font.data,
-        size: (head ? cfg.headerSize : c.fill === "duties" ? dutyFontSize(cfg) : cfg.fontSize) * 2,
+        size: (head ? cfg.headerSize : cellFontSize(cfg, c, text, row.span || 1)) * 2,
       })],
     })),
   });

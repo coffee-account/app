@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
   signup_domains: [],
   reimbursement: { to: "finance@example.org", cc_submitter: true },
   availability: { weeks_ahead: 6, required_for: "active", reminders: true },
-  duty: { people_per_week: 2, info: "Empty the dishwasher, wipe the counters, refill milk and coffee beans.", reminders: true },
+  duty: { people_per_week: 2, info: "Empty the dishwasher, wipe the counters, refill milk and coffee beans.", reminders: true, round: 3 },
   balance: { low_threshold: -10, starting_label: "Starting balance 19.1.2026" },
   payment_info: "Transfer to the PayPal account coffee@example.org and tell the accounting manager.",
   notifications: { refund: "", issues: { milk: "kitchen@example.org", coffee: "", supplies: "", kitchen: "", machine: "", other: "", app: "" } },
@@ -32,6 +32,7 @@ function seed() {
     id: uuid(), last_name, first_name, group_name, legacy_id: `${last_name}.${first_name}`.toLowerCase(),
     email: i < 3 ? `${first_name.toLowerCase()}@example.org` : null,
     active_coffee: i !== 13, active_drinks: i % 3 !== 2, starting_balance: [5, -4.4, 0, 12, -8.8, 3, 0, -2, 7.5, 0, 1, -14.8, 4, 0][i],
+    active_duty: i !== 13, duty_carryover: [2, 1, 1, 2, 1, 0, 2, 1, 0, 1, 2, 0, 1, 0][i], duty_rounds_before: i === 12 ? 2 : 0,
     notes: null, created_at: new Date().toISOString(),
   }));
   const users = [
@@ -70,10 +71,10 @@ function seed() {
       availability.push({ person_id: p.id, week_start: addDays(thisWeek, w * 7), status: ["available", "if_needed", "unavailable"][(i + w) % 3], note: null });
     }
   });
-  const duty_assignments = [
-    { id: uuid(), week_start: thisWeek, person_id: people[3].id, note: null, notified_at: new Date().toISOString(), created_at: new Date().toISOString() },
-    { id: uuid(), week_start: thisWeek, person_id: people[4].id, note: null, notified_at: new Date().toISOString(), created_at: new Date().toISOString() },
-  ];
+  // Two people a week: some past weeks (done) and this week's pair.
+  const duty_assignments = [[-3, 5], [-3, 8], [-2, 9], [-2, 2], [-1, 11], [-1, 7], [0, 3], [0, 4]].map(([w, i]) => (
+    { id: uuid(), week_start: addDays(thisWeek, w * 7), person_id: people[i].id, note: null, notified_at: new Date().toISOString(), created_at: new Date().toISOString() }));
+  const duty_free_weeks = [{ week_start: addDays(thisWeek, 8 * 7), note: "Holiday", created_at: new Date().toISOString() }];
   return {
     settings: Object.entries(DEFAULT_SETTINGS).map(([key, value]) => ({ key, value })),
     groups, people, profiles, users: users.map(({ id, email }) => ({ id, email })),
@@ -81,7 +82,7 @@ function seed() {
       { id: 1, kind: "coffee", price: 0.4, valid_from: "2000-01-01" },
       { id: 2, kind: "drinks", price: 1, valid_from: "2000-01-01" },
     ],
-    count_sessions: sessions, counts, payments, list_templates: [], invoices: [], availability, duty_assignments,
+    count_sessions: sessions, counts, payments, list_templates: [], invoices: [], availability, duty_assignments, duty_free_weeks,
     updates: [{ id: uuid(), title: "Welcome to the new coffee app", body: "The paper lists stay as they are. Please register and fill in your kitchen-duty availability.", audience: "all", pinned: true, created_at: new Date().toISOString() }],
     refund_requests: [],
     issues: [{ id: uuid(), category: "milk", title: "Oat milk is empty", description: "Only one carton of normal milk left.", reporter_name: "Bob Member", status: "open", created_at: new Date().toISOString() }],
@@ -92,12 +93,12 @@ function seed() {
 const KEYS = {
   settings: ["key"], groups: ["name"], people: ["id"], profiles: ["id"], prices: ["kind", "valid_from"],
   count_sessions: ["id"], counts: ["session_id", "person_id"], payments: ["id"], list_templates: ["id"],
-  invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"],
+  invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"], duty_free_weeks: ["week_start"],
   updates: ["id"], refund_requests: ["id"], issues: ["id"],
   payer_aliases: ["id"], ignored_transactions: ["external_id"], payouts: ["id"],
 };
 const DEFAULTS = {
-  people: () => ({ id: uuid(), active_coffee: false, active_drinks: false, starting_balance: 0, created_at: new Date().toISOString() }),
+  people: () => ({ id: uuid(), active_coffee: false, active_drinks: false, active_duty: false, duty_carryover: 0, duty_rounds_before: 0, starting_balance: 0, created_at: new Date().toISOString() }),
   count_sessions: () => ({ id: uuid(), created_at: new Date().toISOString() }),
   payments: () => ({ id: uuid(), source: "manual", created_at: new Date().toISOString() }),
   list_templates: () => ({ id: uuid(), is_default: false, updated_at: new Date().toISOString() }),
@@ -116,7 +117,8 @@ class Store {
   constructor() {
     try { this.db = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch { this.db = seed(); }
     // Demo data saved before newer features existed.
-    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts"]) this.db[t] ??= [];
+    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts", "duty_free_weeks"]) this.db[t] ??= [];
+    for (const p of this.db.people) if (p.active_duty === undefined) Object.assign(p, { active_duty: p.active_coffee || p.active_drinks, duty_carryover: 0, duty_rounds_before: 0 });
     this.save();
   }
   save() { try { localStorage.setItem(KEY, JSON.stringify(this.db)); } catch { /* storage unavailable */ } }
@@ -127,6 +129,7 @@ class Store {
         id: p.id, first_name: p.first_name, last_name: p.last_name, group_name: p.group_name,
         active_coffee: p.active_coffee, active_drinks: p.active_drinks,
         has_account: this.db.profiles.some((x) => x.person_id === p.id),
+        active_duty: p.active_duty, duty_carryover: p.duty_carryover, duty_rounds_before: p.duty_rounds_before,
       }));
     }
     if (!this.db[name]) throw new Error(`Unknown table ${name}`);
@@ -317,12 +320,18 @@ export function createDemoClient(notify) {
         store.save();
         return { data: null, error: null };
       }
+      if (name === "set_duty_target") {
+        const round = Number(store.db.settings.find((s) => s.key === "duty")?.value?.round ?? 0);
+        Object.assign(store.db.people.find((p) => p.id === args.person) || {}, { duty_rounds_before: round - Number(args.target) });
+        store.save();
+        return { data: null, error: null };
+      }
       if (name === "complete_refund") {
         const db = store.db;
         const r = db.refund_requests.find((x) => x.id === args.request_id);
         if (!r || r.status !== "open") return { data: null, error: { message: "This request has already been handled" } };
         if (Number(r.amount) > 0) db.payments.push({ ...DEFAULTS.payments(), person_id: r.person_id, paid_on: args.paid_on, amount: -Number(r.amount), method: "Refund", note: args.note || r.method, source: "refund" });
-        if (r.leaving) Object.assign(db.people.find((p) => p.id === r.person_id) || {}, { active_coffee: false, active_drinks: false });
+        if (r.leaving) Object.assign(db.people.find((p) => p.id === r.person_id) || {}, { active_coffee: false, active_drinks: false, active_duty: false });
         if (r.successor_profile_id) {
           Object.assign(db.profiles.find((p) => p.id === r.successor_profile_id) || {}, { role: "admin" });
           if (r.leaving) Object.assign(db.profiles.find((p) => p.id === r.profile_id) || {}, { role: "member" });

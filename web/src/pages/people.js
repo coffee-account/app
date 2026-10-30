@@ -1,7 +1,12 @@
 import { html, useState, useLoad, Loading, Modal, Field, toast, useBusy, fmtEUR, ConfirmAction, usePersisted, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import * as api from "../lib/api.js";
-import { personName, sortPeople } from "../lib/accounting.js";
+import { personName, sortPeople, dutyRound } from "../lib/accounting.js";
 import { useApp } from "../lib/context.js";
+
+const isActive = (p) => p.active_coffee || p.active_drinks || p.active_duty;
+// Joining the duty pool without any duty history: they owe from the current round on, not from round 1.
+const joinDuty = (p, field, settings) =>
+  (field === "active_duty" && !p.active_duty && !Number(p.duty_rounds_before) && !Number(p.duty_carryover) ? { duty_rounds_before: dutyRound(settings) } : {});
 
 export function PeoplePage() {
   const app = useApp();
@@ -15,7 +20,7 @@ export function PeoplePage() {
   const [editing, setEditing] = useState(null);
   const [busy, run] = useBusy();
 
-  const toggle = (p, field) => run(async () => { await api.savePerson({ id: p.id, [field]: !p[field] }); state.reload(); });
+  const toggle = (p, field) => run(async () => { await api.savePerson({ id: p.id, [field]: !p[field], ...joinDuty(p, field, app.settings) }); state.reload(); });
   const isPending = usePendingDeletes();
   const remove = (p) => deferDelete({
     key: `person:${p.id}`, message: `${personName(p)} deleted`,
@@ -24,8 +29,9 @@ export function PeoplePage() {
   const invite = (p) => run(async () => { await api.invitePerson(p.id); toast(`Invitation sent to ${p.email}`); });
 
   return html`
-    <div class="page-head"><div><h1>${group ? `People · ${group}` : "People"}</h1><p>Who is on the coffee and drinks lists. The two switches decide who gets printed.</p></div>
-      <button class="btn primary" onClick=${() => setEditing({ active_coffee: true, active_drinks: false, starting_balance: 0, group_name: group || "" })}>Add person</button></div>
+    <div class="page-head"><div><h1>${group ? `People · ${group}` : "People"}</h1><p>Who is on the coffee and drinks lists (these decide who gets printed) and in the kitchen-duty pool.</p></div>
+      <button class="btn primary" onClick=${() => setEditing({ active_coffee: true, active_drinks: false, active_duty: true, duty_carryover: 0,
+        duty_rounds_before: dutyRound(app.settings), starting_balance: 0, group_name: group || "" })}>Add person</button></div>
     <${Loading} state=${state}>${({ people, groups, profiles }) => {
       const account = new Map(profiles.filter((x) => x.person_id).map((x) => [x.person_id, x]));
       let rows = people.filter((p) => {
@@ -33,8 +39,8 @@ export function PeoplePage() {
         const s = `${p.first_name} ${p.last_name} ${p.email || ""}`.toLowerCase();
         if (filter.q && !s.includes(filter.q.toLowerCase())) return false;
         if (!group && filter.group && p.group_name !== filter.group) return false;
-        if (filter.status === "active" && !p.active_coffee && !p.active_drinks) return false;
-        if (filter.status === "inactive" && (p.active_coffee || p.active_drinks)) return false;
+        if (filter.status === "active" && !isActive(p)) return false;
+        if (filter.status === "inactive" && isActive(p)) return false;
         return true;
       });
       rows = sortPeople(rows, "group");
@@ -44,17 +50,18 @@ export function PeoplePage() {
           ${!group && html`<select aria-label="Group" value=${filter.group} onChange=${(e) => setFilter({ ...filter, group: e.target.value })}>
             <option value="">All groups</option>${groups.map((g) => html`<option value=${g.name}>${g.name}</option>`)}</select>`}
           <select aria-label="Status" value=${filter.status} onChange=${(e) => setFilter({ ...filter, status: e.target.value })}>
-            <option value="active">On a list</option><option value="inactive">Not on any list</option><option value="all">Everyone</option></select>
-          <span class="count">${rows.length} shown · ${people.filter((p) => p.active_coffee).length} coffee · ${people.filter((p) => p.active_drinks).length} drinks</span>
+            <option value="active">Active</option><option value="inactive">Not active anywhere</option><option value="all">Everyone</option></select>
+          <span class="count">${rows.length} shown · ${people.filter((p) => p.active_coffee).length} coffee · ${people.filter((p) => p.active_drinks).length} drinks · ${people.filter((p) => p.active_duty).length} kitchen duty</span>
         </div>
         <div class="table-wrap"><table class="data">
-          <thead><tr><th>Name</th><th>Group</th><th>E-mail</th><th class="center">Coffee</th><th class="center">Drinks</th><th class="num">Start balance</th><th>Account</th><th></th></tr></thead>
-          <tbody>${rows.map((p) => html`<tr class=${p.active_coffee || p.active_drinks ? "" : "inactive"}>
+          <thead><tr><th>Name</th><th>Group</th><th>E-mail</th><th class="center">Coffee</th><th class="center">Drinks</th><th class="center">Kitchen duty</th><th class="num">Start balance</th><th>Account</th><th></th></tr></thead>
+          <tbody>${rows.map((p) => html`<tr class=${isActive(p) ? "" : "inactive"}>
             <td>${p.last_name}, ${p.first_name}</td>
             <td>${p.group_name || ""}</td>
             <td class="small">${p.email || ""}</td>
             <td class="center"><input type="checkbox" aria-label="Active for coffee" checked=${p.active_coffee} disabled=${busy} onChange=${() => toggle(p, "active_coffee")} /></td>
             <td class="center"><input type="checkbox" aria-label="Active for drinks" checked=${p.active_drinks} disabled=${busy} onChange=${() => toggle(p, "active_drinks")} /></td>
+            <td class="center"><input type="checkbox" aria-label="In the kitchen-duty pool" checked=${p.active_duty} disabled=${busy} onChange=${() => toggle(p, "active_duty")} /></td>
             <td class="num ${Number(p.starting_balance) < 0 ? "neg" : Number(p.starting_balance) ? "" : "zero"}">${fmtEUR(p.starting_balance)}</td>
             <td>${account.has(p.id) ? html`<span class="badge ok">linked</span>`
               : p.email && !group ? html`<button class="btn-text" disabled=${busy} onClick=${() => invite(p)}>Invite</button>` : html`<span class="muted">—</span>`}</td>
@@ -89,6 +96,15 @@ function PersonModal({ person, groups, onClose, onSaved }) {
       <div class="row">
         <label class="check"><input type="checkbox" checked=${p.active_coffee} onChange=${(e) => set("active_coffee", e.target.checked)} /> On the coffee list</label>
         <label class="check"><input type="checkbox" checked=${p.active_drinks} onChange=${(e) => set("active_drinks", e.target.checked)} /> On the drinks list</label>
+        <label class="check"><input type="checkbox" checked=${p.active_duty}
+          onChange=${(e) => setP((x) => ({ ...x, ...(e.target.checked ? joinDuty(x, "active_duty", app.settings) : {}), active_duty: e.target.checked }))} /> In the kitchen-duty pool</label>
+      </div>
+      <div class="form-grid">
+        <${Field} label="Kitchen duties before the app" hint="Done before duties were tracked here (the old sheet's carryover).">
+          <input type="number" min="0" value=${p.duty_carryover ?? 0} onInput=${(e) => set("duty_carryover", Number(e.target.value) || 0)} /><//>
+        <${Field} label="Kitchen-duty target" hint=${`Duties they should have done by round ${dutyRound(app.settings)}; it goes up by one each round.`}>
+          <input type="number" min="0" value=${Math.max(0, dutyRound(app.settings) - Number(p.duty_rounds_before || 0))}
+            onInput=${(e) => set("duty_rounds_before", dutyRound(app.settings) - (Math.round(Number(e.target.value)) || 0))} /><//>
       </div>
       <${Field} label="Notes"><textarea value=${p.notes || ""} onInput=${(e) => set("notes", e.target.value)}></textarea><//>
       <div class="row end"><button type="button" class="btn" onClick=${onClose}>Cancel</button><button class="btn primary" disabled=${busy}>Save</button></div>

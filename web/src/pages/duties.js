@@ -1,8 +1,8 @@
 import { html, useState, useMemo, useLoad, Loading, Modal, toast, useBusy, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
-import { personName, sortPeople, availabilityRules } from "../lib/accounting.js";
-import { weeksFrom, weekLabel, mondayOf, addDays, isoWeek, isoDate } from "../lib/dates.js";
+import { personName, sortPeople, availabilityRules, dutyStats, dutyRound, owedTone } from "../lib/accounting.js";
+import { weeksFrom, weekLabel, mondayOf, addDays, isoWeek } from "../lib/dates.js";
 import { STATUS } from "./availability.js";
 import { StatusCup, CupLegend, EmptyState, WeekCalendar } from "../lib/drawings.js";
 
@@ -16,12 +16,13 @@ export function DutiesPage() {
   const [tab, setTab] = useState("schedule");
   const weeks = weeksFrom(span, addDays(mondayOf(), -7));
   const state = useLoad(async () => {
-    const [people, duties, availability] = await Promise.all([
+    const [people, duties, availability, freeWeeks] = await Promise.all([
       api.listDirectory(),
       manager ? api.listAllDuties() : api.listDuties(weeks[0], weeks[weeks.length - 1]),
       manager ? api.listAvailability(weeks[0], weeks[weeks.length - 1]) : Promise.resolve([]),
+      api.listDutyFreeWeeks(),
     ]);
-    return { people, duties, availability };
+    return { people, duties, availability, free: new Map(freeWeeks.map((f) => [f.week_start, f])) };
   }, [span, manager]);
   const [assigning, setAssigning] = useState(null);
 
@@ -33,9 +34,11 @@ export function DutiesPage() {
     ${manager && html`<div class="tabs">
       <button class=${tab === "schedule" ? "active" : ""} onClick=${() => setTab("schedule")}>Schedule</button>
       <button class=${tab === "matrix" ? "active" : ""} onClick=${() => setTab("matrix")}>Availability overview</button>
+      <button class=${tab === "rounds" ? "active" : ""} onClick=${() => setTab("rounds")}>Rounds</button>
     </div>`}
     <${Loading} state=${state}>${(data) => tab === "matrix" && manager
       ? html`<${AvailabilityMatrix} data=${data} weeks=${weeks.slice(1)} settings=${app.settings} />`
+      : tab === "rounds" && manager ? html`<${Rounds} data=${data} app=${app} reload=${state.reload} />`
       : html`<${Schedule} data=${data} weeks=${weeks} manager=${manager} app=${app}
           onAssign=${setAssigning} reload=${state.reload} />`}<//>
     <div class="row" style="margin-top:12px;gap:18px">
@@ -66,6 +69,12 @@ function Schedule({ data, weeks, manager, app, onAssign, reload }) {
     commit: () => api.unassignDuty(a, notify), onDone: reload,
   });
   const resend = (a) => run(async () => { await api.resendDuty(a.id); toast("E-mail sent"); reload(); });
+  const setFree = (w, free) => run(async () => {
+    if (free) await api.setDutyFree(w, "");
+    else await api.clearDutyFree(w);
+    toast(free ? `${weekLabel(w)}: no kitchen duty` : `${weekLabel(w)}: kitchen duty again`);
+    reload();
+  });
 
   if (!manager && !data.duties.length) {
     return html`<${EmptyState} drawing=${html`<${WeekCalendar} />`}>Nobody has been scheduled yet. Assignments will appear here.<//>`;
@@ -75,7 +84,8 @@ function Schedule({ data, weeks, manager, app, onAssign, reload }) {
     <tbody>${weeks.map((w) => {
       const rows = data.duties.filter((d) => d.week_start === w && !isPending(`duty:${d.id}`));
       const mine = rows.some((d) => d.person_id === app.person?.id);
-      return html`<tr class=${w < thisWeek ? "inactive" : ""}>
+      const free = data.free.get(w);
+      return html`<tr class=${w < thisWeek || free ? "inactive" : ""}>
         <td style="white-space:nowrap"><b>${weekLabel(w)}</b>
           ${w === thisWeek && html` <span class="badge">this week</span>`}
           ${mine && html` <span class="badge ok">you</span>`}</td>
@@ -89,8 +99,10 @@ function Schedule({ data, weeks, manager, app, onAssign, reload }) {
                 ? [{ label: "Remove and e-mail", danger: true, onClick: () => remove(a, true) }, { label: "Remove quietly", danger: true, onClick: () => remove(a, false) }]
                 : [{ label: "Remove", danger: true, onClick: () => remove(a, false) }]} />`}
           </span>`;
-        }) : html`<span class="muted">—</span>`}</td>
-        ${manager && html`<td class="num"><button class="btn small" onClick=${() => onAssign(w)}>Assign</button></td>`}
+        }) : free ? html`<span class="muted">No kitchen duty${free.note ? ` (${free.note})` : ""}</span>` : html`<span class="muted">—</span>`}</td>
+        ${manager && html`<td class="num"><span class="row end" style="gap:10px;flex-wrap:nowrap">
+          ${w >= thisWeek && html`<button class="btn-text" disabled=${busy} onClick=${() => setFree(w, !free)}>${free ? "Kitchen duty after all" : "No duty this week"}</button>`}
+          ${!free && html`<button class="btn small" onClick=${() => onAssign(w)}>Assign</button>`}</span></td>`}
       </tr>`;
     })}</tbody>
   </table></div>`;
@@ -102,12 +114,7 @@ function AssignModal({ week, data, settings, onClose, reload }) {
   const [search, setSearch] = useState("");
   const [busy, run] = useBusy();
   const assigned = new Set(data.duties.filter((d) => d.week_start === week).map((d) => d.person_id));
-  const yearAgo = addDays(isoDate(), -365);
-  const dutyCount = useMemo(() => {
-    const m = new Map();
-    for (const d of data.duties) if (d.week_start >= yearAgo) m.set(d.person_id, (m.get(d.person_id) || 0) + 1);
-    return m;
-  }, [data.duties]);
+  const stats = useMemo(() => dutyStats(data.people, data.duties, dutyRound(settings)), [data, settings]);
   const lastDuty = useMemo(() => {
     const m = new Map();
     for (const d of data.duties) if (!m.has(d.person_id) || m.get(d.person_id) < d.week_start) m.set(d.person_id, d.week_start);
@@ -116,11 +123,13 @@ function AssignModal({ week, data, settings, onClose, reload }) {
   const avail = new Map(data.availability.filter((a) => a.week_start === week).map((a) => [a.person_id, a]));
   const target = Number(settings.duty?.people_per_week || 0);
 
-  let people = data.people.filter((p) => showAll || p.active_coffee || p.active_drinks);
+  let people = data.people.filter((p) => showAll || p.active_duty);
   if (search) people = people.filter((p) => personName(p).toLowerCase().includes(search.toLowerCase()));
+  // Available first, then whoever owes the most duties, then whoever had duty longest ago.
   people = sortPeople(people, "last").sort((a, b) =>
     STATUS_ORDER[avail.get(a.id)?.status] - STATUS_ORDER[avail.get(b.id)?.status]
-    || (dutyCount.get(a.id) || 0) - (dutyCount.get(b.id) || 0));
+    || stats.get(b.id).owed - stats.get(a.id).owed
+    || (lastDuty.get(a.id) || "").localeCompare(lastDuty.get(b.id) || ""));
 
   const assign = (p) => run(async () => {
     const { mailError } = await api.assignDuty(week, p.id, note);
@@ -130,16 +139,16 @@ function AssignModal({ week, data, settings, onClose, reload }) {
   });
 
   return html`<${Modal} title=${`Assign · ${weekLabel(week)}`} onClose=${onClose} wide>
-    <p class="lede" style="margin:6px 0 14px">${assigned.size} assigned${target ? ` of ${target}` : ""}. Sorted by availability, then by fewest duties in the last 12 months.</p>
+    <p class="lede" style="margin:6px 0 14px">${assigned.size} assigned${target ? ` of ${target}` : ""}. Sorted by availability, then by duties owed this round, then by who had duty longest ago.</p>
     <${CupLegend} />
     <div class="toolbar">
       <input data-search placeholder="Search name" value=${search} onInput=${(e) => setSearch(e.target.value)} />
       <input placeholder="Note for the e-mail (optional)" style="max-width:320px" value=${note} onInput=${(e) => setNote(e.target.value)} />
-      <label class="check"><input type="checkbox" checked=${showAll} onChange=${(e) => setShowAll(e.target.checked)} /> Include people not on any list</label>
+      <label class="check"><input type="checkbox" checked=${showAll} onChange=${(e) => setShowAll(e.target.checked)} /> Include people outside the duty pool</label>
       <span class="count">${people.length} people</span>
     </div>
     <div class="table-wrap" style="max-height:55vh;overflow-y:auto"><table class="data">
-      <thead><tr><th>Name</th><th>Group</th><th>Availability</th><th class="num">Duties (12 mo.)</th><th>Last duty</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Group</th><th>Availability</th><th class="num">Owed</th><th class="num">Done / target</th><th>Last duty</th><th></th></tr></thead>
       <tbody>${people.map((p) => {
         const a = avail.get(p.id);
         return html`<tr>
@@ -147,7 +156,8 @@ function AssignModal({ week, data, settings, onClose, reload }) {
           <td>${p.group_name || ""}</td>
           <td><${StatusCup} state=${a?.status} label="" /> ${a ? statusLabel[a.status] : html`<span class="muted">no answer</span>`}
             ${a?.note && html`<div class="small muted">${a.note}</div>`}</td>
-          <td class="num ${dutyCount.get(p.id) ? "" : "zero"}">${dutyCount.get(p.id) || 0}</td>
+          <td class="num"><${Owed} n=${stats.get(p.id).owed} /></td>
+          <td class="num small">${stats.get(p.id).done}${stats.get(p.id).scheduled ? ` + ${stats.get(p.id).scheduled}` : ""} / ${stats.get(p.id).target}</td>
           <td>${lastDuty.get(p.id) ? `Week ${isoWeek(lastDuty.get(p.id))}, ${lastDuty.get(p.id).slice(0, 4)}` : "—"}</td>
           <td class="num">${assigned.has(p.id)
             ? html`<span class="badge ok">assigned</span>`
@@ -165,8 +175,9 @@ function AvailabilityMatrix({ data, weeks, settings }) {
   const thisWeek = mondayOf();
   const key = (pid, w) => `${pid}|${w}`;
   const map = new Map(data.availability.map((a) => [key(a.person_id, a.week_start), a]));
+  for (const w of data.free.keys()) mandatory.delete(w);
   const missingCount = (p) => (p.has_account ? [...mandatory].filter((w) => !map.has(key(p.id, w))).length : 0);
-  let people = sortPeople(data.people.filter((p) => requiredFor === "all" || p.active_coffee || p.active_drinks), "group");
+  let people = sortPeople(data.people.filter((p) => requiredFor === "all" || p.active_duty), "group");
   if (missingFirst) people = [...people].sort((a, b) => missingCount(b) - missingCount(a));
   const short = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
   return html`<div>
@@ -185,10 +196,60 @@ function AvailabilityMatrix({ data, weeks, settings }) {
             <small>${[p.group_name, !p.has_account && "no account"].filter(Boolean).join(" · ")}</small></div></td>
           <td class="num ${m ? "neg" : "zero"}">${p.has_account ? m : "—"}</td>
           ${weeks.map((w) => {
+            if (data.free.has(w)) return html`<td class="week free" title=${`${weekLabel(w)}: no kitchen duty`}>–</td>`;
             const a = map.get(key(p.id, w));
             const word = a ? `${statusLabel[a.status]}${a.note ? `: ${a.note}` : ""}` : "No answer";
             return html`<td class="week ${w === thisWeek ? "current" : ""}"><${StatusCup} state=${a?.status} label=${`${weekLabel(w)}: ${word}`} /></td>`;
           })}
+        </tr>`;
+      })}</tbody>
+    </table></div>
+  </div>`;
+}
+
+const Owed = ({ n }) => html`<span class=${`badge ${owedTone(n)}`} title=${n > 0 ? `${n} more this round` : n < 0 ? `${-n} ahead` : "Done for this round"}>${n}</span>`;
+
+/** Rounds, as in the old sheet: who has done their share, who is behind. Targets can be adjusted per person. */
+function Rounds({ data, app, reload }) {
+  const round = dutyRound(app.settings);
+  const [busy, run] = useBusy();
+  const [showAll, setShowAll] = useState(false);
+  const stats = dutyStats(data.people, data.duties, round);
+  const pool = data.people.filter((p) => p.active_duty);
+  const people = sortPeople(showAll ? data.people : pool, "last").sort((a, b) => stats.get(b.id).owed - stats.get(a.id).owed);
+  const behind = pool.filter((p) => stats.get(p.id).owed > 0).length;
+  const nextRound = () => run(async () => {
+    await api.saveSetting("duty", { ...app.settings.duty, round: round + 1 });
+    toast(`Round ${round + 1} started: everyone in the pool owes one more duty`);
+    await app.refresh();
+  });
+  const setTarget = (p, value) => {
+    const target = Math.round(Number(value));
+    if (!Number.isFinite(target) || target < 0 || target === stats.get(p.id).target) return;
+    run(async () => { await api.setDutyTarget(p.id, target); toast(`${personName(p)}: target ${target}`); reload(); });
+  };
+  return html`<div>
+    <p class="lede" style="margin-bottom:14px">Each round, everyone in the duty pool does one kitchen duty. People who joined later owe only the rounds since;
+      change a target where someone should do more or fewer. <b>Owed</b> = target − done − scheduled.</p>
+    <div class="toolbar">
+      <span><b>Round ${round}</b> · ${behind ? `${behind} of ${pool.length} still owe a duty` : "everyone has done their share"}</span>
+      <${ConfirmAction} label=${`Start round ${round + 1}`} question=${`Start round ${round + 1}? Everyone in the pool then owes one more duty.`}
+        disabled=${busy} onConfirm=${nextRound} />
+      <span class="spacer"></span>
+      <label class="check"><input type="checkbox" checked=${showAll} onChange=${(e) => setShowAll(e.target.checked)} /> Include people outside the pool</label>
+    </div>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Name</th><th>Group</th><th class="num">Done</th><th class="num">Scheduled</th><th class="num">Target</th><th class="num">Owed</th></tr></thead>
+      <tbody>${people.map((p) => {
+        const s = stats.get(p.id);
+        return html`<tr key=${p.id} class=${p.active_duty ? "" : "inactive"}>
+          <td>${personName(p)}</td><td>${p.group_name || ""}</td>
+          <td class="num" title=${p.duty_carryover ? `Including ${p.duty_carryover} from before the app` : undefined}>${s.done}</td>
+          <td class="num ${s.scheduled ? "" : "zero"}">${s.scheduled}</td>
+          <td class="num"><input class="target-input" type="number" min="0" step="1" value=${s.target} disabled=${busy}
+            aria-label=${`Target for ${personName(p)}`}
+            onChange=${(e) => setTarget(p, e.target.value)} onKeyDown=${(e) => e.key === "Enter" && e.target.blur()} /></td>
+          <td class="num"><${Owed} n=${s.owed} /></td>
         </tr>`;
       })}</tbody>
     </table></div>

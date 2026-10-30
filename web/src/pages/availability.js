@@ -17,20 +17,24 @@ export function AvailabilityPage() {
   const { weeksAhead } = availabilityRules(settings);
   const [extra, setExtra] = useState(0);
   const weeks = weeksFrom(weeksAhead + extra);
-  const state = useLoad(() => api.listAvailability(weeks[0], weeks[weeks.length - 1], person.id), [person.id, extra]);
+  const state = useLoad(async () => {
+    const [rows, freeWeeks] = await Promise.all([api.listAvailability(weeks[0], weeks[weeks.length - 1], person.id), api.listDutyFreeWeeks()]);
+    return { rows, free: new Map(freeWeeks.map((f) => [f.week_start, f])) };
+  }, [person.id, extra]);
+  const free = state.data?.free || new Map();
   const [draft, setDraft] = useState({});
   const [busy, run] = useBusy();
 
   useEffect(() => {
-    if (state.data) setDraft(Object.fromEntries(state.data.map((r) => [r.week_start, { status: r.status, note: r.note || "" }])));
+    if (state.data) setDraft(Object.fromEntries(state.data.rows.map((r) => [r.week_start, { status: r.status, note: r.note || "" }])));
   }, [state.data]);
 
   const required = availabilityRequired(settings, person);
-  const mandatoryWeeks = new Set(weeksFrom(weeksAhead));
+  const mandatoryWeeks = new Set(weeksFrom(weeksAhead).filter((w) => !free.has(w)));
   const missing = weeks.filter((w) => mandatoryWeeks.has(w) && !draft[w]?.status);
 
   const setWeek = (w, patch) => setDraft((d) => ({ ...d, [w]: { note: "", ...d[w], ...patch } }));
-  const setAll = (status) => setDraft((d) => Object.fromEntries(weeks.map((w) => [w, { note: "", ...d[w], status: d[w]?.status || status }])));
+  const setAll = (status) => setDraft((d) => ({ ...d, ...Object.fromEntries(weeks.filter((w) => !free.has(w)).map((w) => [w, { note: "", ...d[w], status: d[w]?.status || status }])) }));
 
   const save = () => run(async () => {
     const rows = Object.entries(draft).filter(([, v]) => v.status).map(([week_start, v]) => ({
@@ -44,11 +48,11 @@ export function AvailabilityPage() {
   return html`
     <div class="page-head"><div><h1>My availability</h1>
       <p>${required
-        ? `Keep the next ${weeksAhead} weeks answered so kitchen duty can be planned fairly.`
+        ? `Keep the next ${weeksAhead} weeks answered so kitchen duty can be planned.`
         : "Optional for you, but it helps the duty managers plan."}</p></div></div>
     <${Loading} state=${state}>${() => html`
       <div class="toolbar">
-        <${FillLevel} value=${weeksAhead - missing.length} max=${weeksAhead} label="Weeks answered" />
+        <${FillLevel} value=${mandatoryWeeks.size - missing.length} max=${mandatoryWeeks.size} label="Weeks answered" />
         <span class="spacer"></span>
         <span class="small muted">Fill empty weeks with</span>
         <div class="seg" role="group" aria-label="Fill all empty weeks">
@@ -57,6 +61,10 @@ export function AvailabilityPage() {
       </div>
       <div class="week-grid">
         ${weeks.map((w) => {
+          if (free.has(w)) {
+            return html`<div class="week-row free"><div><b>${weekLabel(w)}</b></div>
+              <span class="muted">No kitchen duty this week${free.get(w).note ? ` (${free.get(w).note})` : ""}</span></div>`;
+          }
           const v = draft[w] || {};
           return html`<div class="week-row ${required && mandatoryWeeks.has(w) && !v.status ? "missing" : ""}">
             <div>

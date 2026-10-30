@@ -75,7 +75,7 @@ function GeneralSettings({ settings, onSaved }) {
           </div>
           <${Field} label="Availability is mandatory for">
             <select value=${s.availability.required_for} onChange=${(e) => sub("availability", { required_for: e.target.value })}>
-              <option value="active">Everyone on the coffee or drinks list</option>
+              <option value="active">Everyone in the kitchen-duty pool</option>
               <option value="all">Every connected account</option>
             </select><//>
           <label class="check"><input type="checkbox" checked=${s.availability.reminders} onChange=${(e) => sub("availability", { reminders: e.target.checked })} />

@@ -364,9 +364,11 @@ async function weekly(caller: Caller, s: Record<string, any>) {
     const { data: people } = await db.from("people").select("*").in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
     const from = iso(mondayOf(todayBerlin()));
     const { data: avail } = await db.from("availability").select("person_id, week_start").gte("week_start", from);
+    const { data: free } = await db.from("duty_free_weeks").select("week_start").gte("week_start", from);
     for (const p of people ?? []) {
-      if (av.required_for !== "all" && !p.active_coffee && !p.active_drinks) continue;
-      const filled = new Set((avail ?? []).filter((a) => a.person_id === p.id).map((a) => a.week_start));
+      if (av.required_for !== "all" && !p.active_duty) continue;
+      // Weeks without kitchen duty need no answer.
+      const filled = new Set([...(avail ?? []).filter((a) => a.person_id === p.id), ...(free ?? [])].map((a) => a.week_start));
       const missing = missingWeeks(weeksAhead, filled);
       if (!missing.length) continue;
       const email = p.email ?? profiles?.find((x) => x.person_id === p.id)?.email;
