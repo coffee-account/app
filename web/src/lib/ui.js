@@ -163,6 +163,11 @@ export function loadScript(src) {
   });
 }
 
+export async function loadQrCode() {
+  await loadScript("https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js");
+  return window.qrcode;
+}
+
 export async function loadExcelJS() {
   await loadScript("https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js");
   return window.ExcelJS;

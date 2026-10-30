@@ -146,6 +146,19 @@ export const listAllDuties = () => q(sb.from("duty_assignments").select("*"));
 
 export const listDutyFreeWeeks = () => q(sb.from("duty_free_weeks").select("*").order("week_start"));
 export const setDutyFree = (week_start, note) => q(sb.from("duty_free_weeks").upsert({ week_start, note: note || null }, { onConflict: "week_start" }));
+// Guest availability: the page behind the QR code, usable without an account.
+export const guestLink = () => `${appUrl()}#/guest`;
+export const guestAvailabilityInfo = () => q(sb.rpc("guest_availability_info"));
+export const submitGuestAvailability = (first_name, last_name, group_name, answers) =>
+  q(sb.rpc("submit_guest_availability", { first_name, last_name, group_name, answers }));
+export const listGuestAvailability = () => q(sb.from("guest_availability").select("*").eq("status", "pending").order("created_at"));
+export const dismissGuestAvailability = (id) => q(sb.from("guest_availability").update({ status: "dismissed" }).eq("id", id));
+/** Gives a waiting guest's answers to a person; weeks they already answered stay as they are. */
+export async function connectGuestAvailability(g, personId) {
+  const rows = g.answers.map((a) => ({ person_id: personId, week_start: a.week, status: a.status, note: a.note || null }));
+  if (rows.length) await q(sb.from("availability").upsert(rows, { onConflict: "person_id,week_start", ignoreDuplicates: true }));
+  await q(sb.from("guest_availability").update({ status: "applied", person_id: personId }).eq("id", g.id));
+}
 export const setDutyTarget = (person, target) => q(sb.rpc("set_duty_target", { person, target }));
 export const clearDutyFree = (week_start) => q(sb.from("duty_free_weeks").delete().eq("week_start", week_start));
 

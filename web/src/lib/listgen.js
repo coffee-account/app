@@ -176,16 +176,16 @@ export const MIN_FIT_SIZE = 2; // pt
 /**
  * Font size (pt) for a table cell: the normal size, or smaller (in half points, down to 2 pt) when
  * "fit text" is on and the text would be wider than the cell or have more lines than fit its height.
- * Widths are measured with the wider of the print font and Arial, which Word falls back to when the
- * print font isn't installed, so the text stays on one line there too.
+ * Widths are measured with the wider of the print font and Arial (Word's usual fallback when the print
+ * font isn't installed), so the text stays on one line there too.
  */
 export function cellFontSize(cfg, c, text, span = 1) {
   const base = c.fill === "duties" ? dutyFontSize(cfg) : Number(cfg.fontSize);
   if (!cfg.fitText || !text) return base;
   const lines = String(text).split("\n");
   const em = (l) => Math.max(textEm(l, cfg.wordArial ? "Arial" : PRINT_FONTS.data), textEm(l, "Arial"));
-  const width = c.width - 3.2; // cell padding on both sides, plus room for differences between renderers
-  const widest = Math.max(...lines.map(em)) * 1.06;
+  const width = c.width - 2.4; // cell padding: 1.2 mm each side in the preview, 1 mm in Word
+  const widest = Math.max(...lines.map(em)) * 1.01;
   const byWidth = widest > 0 ? width / (widest * PT) : base;
   const byHeight = (cfg.rowHeight * span - 0.8) / (lines.length * 1.15 * PT);
   return Math.max(MIN_FIT_SIZE, Math.min(base, Math.floor(Math.min(byWidth, byHeight) * 2) / 2));

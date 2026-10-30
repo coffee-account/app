@@ -1,17 +1,17 @@
 import { html, useState, useMemo, useLoad, Loading, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import * as api from "../lib/api.js";
-import { personName, sortPeople } from "../lib/accounting.js";
+import { personName, sortPeople, dutyRound } from "../lib/accounting.js";
 import { fmtDate } from "../lib/dates.js";
 import { readStatement, matchPayer, normName } from "../lib/paypal.js";
 import { Figures, EmptyState, ReceiptCarrier } from "../lib/drawings.js";
 
 export function PaypalPage() {
   const state = useLoad(async () => {
-    const [people, payments, aliases, ignored, invoices, refunds, payouts, settings] = await Promise.all([
+    const [people, payments, aliases, ignored, invoices, refunds, payouts, settings, groups] = await Promise.all([
       api.listPeople(), api.listPayments(), api.listAliases(), api.listIgnored(),
-      api.listInvoices(false), api.listRefunds(false), api.listPayouts(), api.loadSettings(),
+      api.listInvoices(false), api.listRefunds(false), api.listPayouts(), api.loadSettings(), api.listGroups(),
     ]);
-    return { people, payments, aliases, ignored, invoices, refunds, payouts, stored: settings.paypal_balance || null };
+    return { people, payments, aliases, ignored, invoices, refunds, payouts, groups, round: dutyRound(settings), stored: settings.paypal_balance || null };
   });
   const [statement, setStatement] = useState(null);
   const [tab, setTab] = useState("in");
@@ -217,6 +217,23 @@ function Review({ statement, data, onDone, onClear }) {
   const [showDone, setShowDone] = useState(false);
   const [busy, run] = useBusy();
   const set = (id, patch) => setChoice((c) => ({ ...c, [id]: { ...c[id], ...patch } }));
+  // New people, one per PayPal payer (several payments from the same payer share it). "new:<payer>" as personId.
+  const [drafts, setDrafts] = useState({});
+  const payerKey = (r) => r.email || normName(r.name) || r.id;
+  const startNew = (r) => {
+    const key = payerKey(r);
+    if (!drafts[key]) {
+      const words = String(r.name || "").trim().split(/\s+/).filter(Boolean);
+      setDrafts((d) => ({ ...d, [key]: { first_name: words[0] || "", last_name: words.slice(1).join(" "), group_name: "", coffee: true, drinks: false, duty: true } }));
+    }
+    // Other payments from the same payer that nobody was chosen for go to the same new person.
+    setChoice((c) => Object.fromEntries(Object.entries(c).map(([id, v]) => {
+      const row = rows.find((x) => x.id === id);
+      const same = id === r.id || (!v.personId && !v.skip && row && payerKey(row) === key && row.state !== "booked" && row.state !== "ignored");
+      return [id, same ? { ...v, personId: `new:${key}`, include: true } : v];
+    })));
+  };
+  const setDraft = (key, patch) => setDrafts((d) => ({ ...d, [key]: { ...d[key], ...patch } }));
 
   const open = rows.filter((r) => r.state !== "booked" && r.state !== "ignored");
   const toBook = open.filter((r) => choice[r.id].include && choice[r.id].personId && !choice[r.id].skip);
@@ -227,10 +244,22 @@ function Review({ statement, data, onDone, onClear }) {
   const shown = [...open].sort((a, b) => order[a.state] - order[b.state] || a.date.localeCompare(b.date));
 
   const save = () => run(async () => {
+    // Create the new people first, then book their payments like any other.
+    const created = {};
+    for (const key of new Set(toBook.map((r) => choice[r.id].personId).filter((id) => id.startsWith("new:")).map((id) => id.slice(4)))) {
+      const d = drafts[key];
+      if (!d.first_name.trim() || !d.last_name.trim()) throw new Error("Please give a first and last name for every new person.");
+      const p = await api.savePerson({
+        first_name: d.first_name.trim(), last_name: d.last_name.trim(), group_name: d.group_name || null,
+        active_coffee: d.coffee, active_drinks: d.drinks, active_duty: d.duty, duty_rounds_before: data.round,
+      });
+      created[`new:${key}`] = p.id;
+    }
+    const idOf = (r) => created[choice[r.id].personId] ?? choice[r.id].personId;
     const aliases = [];
     if (remember) {
       for (const r of toBook) {
-        const person_id = choice[r.id].personId;
+        const person_id = idOf(r);
         if (r.email) aliases.push({ person_id, kind: "email", value: r.email });
         if (normName(r.name)) aliases.push({ person_id, kind: "name", value: normName(r.name) });
       }
@@ -239,7 +268,7 @@ function Review({ statement, data, onDone, onClear }) {
     const uniq = [...new Map(aliases.map((a) => [`${a.kind}:${a.value}`, a])).values()];
     await api.importPaypal({
       payments: toBook.map((r) => ({
-        person_id: choice[r.id].personId, paid_on: r.date, amount: r.amount, external_id: r.id,
+        person_id: idOf(r), paid_on: r.date, amount: r.amount, external_id: r.id,
         payer: [r.name, r.email].filter(Boolean).join(" · "), note: r.note || null,
       })),
       aliases: uniq,
@@ -270,11 +299,16 @@ function Review({ statement, data, onDone, onClear }) {
             <td class="num">${fmtEUR(r.amount)}</td>
             <td>${c.skip ? html`<span class="muted">not coffee money</span>` : html`
               <select aria-label=${`Person for ${r.name || r.email}`} value=${c.personId} style="min-width:200px"
-                onChange=${(e) => set(r.id, { personId: e.target.value, include: !!e.target.value })}>
+                onChange=${(e) => (e.target.value === "new" ? startNew(r) : set(r.id, { personId: e.target.value, include: !!e.target.value }))}>
                 <option value="">Who paid?</option>
+                <option value=${c.personId.startsWith("new:") ? c.personId : "new"}>+ New person…</option>
                 ${people.map((p) => html`<option value=${p.id}>${p.last_name}, ${p.first_name}${p.group_name ? ` (${p.group_name})` : ""}</option>`)}
               </select>
-              <div class="small ${r.state === "matched" ? "pos" : "muted"}">${r.match.how ? `${r.state === "matched" ? "✓ " : "suggested: "}${r.match.how}` : "no match"}</div>`}</td>
+              ${c.personId.startsWith("new:")
+                ? html`<${NewPerson} draft=${drafts[c.personId.slice(4)]} groups=${data.groups}
+                    shared=${shown.findIndex((x) => choice[x.id].personId === c.personId) !== shown.indexOf(r)}
+                    onChange=${(patch) => setDraft(c.personId.slice(4), patch)} />`
+                : html`<div class="small ${r.state === "matched" ? "pos" : "muted"}">${r.match.how ? `${r.state === "matched" ? "✓ " : "suggested: "}${r.match.how}` : "no match"}</div>`}`}</td>
             <td class="center"><input type="checkbox" aria-label="Record this payment" checked=${c.include && !c.skip} disabled=${!c.personId || c.skip}
               onChange=${(e) => set(r.id, { include: e.target.checked })} /></td>
             <td class="num">${c.skip
@@ -300,6 +334,24 @@ function Review({ statement, data, onDone, onClear }) {
         <td class="num">${r.state === "ignored" && html`<button class="btn-text" onClick=${() => run(async () => { await api.unignore(r.id); onDone(); })}>Offer again</button>`}</td>
       </tr>`)}</tbody></table></div>`}
   </section>`;
+}
+
+/** Name, group and lists for a payer who isn't in the app yet (created when the payments are recorded). */
+function NewPerson({ draft, groups, shared, onChange }) {
+  if (shared) return html`<div class="small muted">the same new person as above</div>`;
+  return html`<div class="grid new-person" style="gap:6px;margin-top:6px">
+    <div class="row" style="gap:6px;flex-wrap:nowrap">
+      <input aria-label="First name" placeholder="First name" value=${draft.first_name} onInput=${(e) => onChange({ first_name: e.target.value })} />
+      <input aria-label="Last name" placeholder="Last name" value=${draft.last_name} onInput=${(e) => onChange({ last_name: e.target.value })} />
+    </div>
+    <select aria-label="Group" value=${draft.group_name} onChange=${(e) => onChange({ group_name: e.target.value })}>
+      <option value="">No group</option>${groups.map((g) => html`<option value=${g.name}>${g.name}</option>`)}</select>
+    <div class="row" style="gap:10px">
+      <label class="check"><input type="checkbox" checked=${draft.coffee} onChange=${(e) => onChange({ coffee: e.target.checked })} /> Coffee list</label>
+      <label class="check"><input type="checkbox" checked=${draft.drinks} onChange=${(e) => onChange({ drinks: e.target.checked })} /> Drinks list</label>
+      <label class="check"><input type="checkbox" checked=${draft.duty} onChange=${(e) => onChange({ duty: e.target.checked })} /> Kitchen duty</label>
+    </div>
+  </div>`;
 }
 
 function Aliases({ data, reload }) {

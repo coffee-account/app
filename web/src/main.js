@@ -22,6 +22,7 @@ import { InfoPage } from "./pages/info.js";
 import { RefundsPage } from "./pages/refunds.js";
 import { IssuesPage } from "./pages/issues.js";
 import { PaypalPage } from "./pages/paypal.js";
+import { GuestAvailabilityPage, GUEST_KEY } from "./pages/guest.js";
 
 const ROUTES = [
   { path: "info", title: "Updates & guide", page: InfoPage, section: "INFO", show: () => true },
@@ -61,9 +62,14 @@ function useRoute() {
 }
 
 // ── Auth screens ──
-function AuthScreen({ settings, groups }) {
-  const [mode, setMode] = useState("signin");
-  const [form, setForm] = useState({ email: "", password: "", first_name: "", last_name: "", group: "" });
+function AuthScreen({ settings, groups, initialMode = "signin" }) {
+  const [mode, setMode] = useState(initialMode);
+  // Coming from the guest availability form: their name and group are already known.
+  const [form, setForm] = useState(() => {
+    let guest = {};
+    try { guest = JSON.parse(sessionStorage.getItem(GUEST_KEY)) || {}; } catch { /* storage unavailable */ }
+    return { email: "", password: "", first_name: guest.first || "", last_name: guest.last || "", group: guest.group || "" };
+  });
   const [done, setDone] = useState(null);
   const [busy, run] = useBusy();
   const set = (k) => (e) => { const v = e.target.value; setForm((f) => ({ ...f, [k]: v })); };
@@ -133,6 +139,7 @@ function AuthScreen({ settings, groups }) {
       ${mode === "register" && html`<p class="small muted">If you are already on the coffee or drinks list, use the same name:
         an admin will then connect your account to your existing balance.</p>`}
     </form>`}
+    <p class="small muted" style="margin:16px 0 0"><a href="#/guest">Fill in your kitchen-duty availability without signing in →</a></p>
   </div></div>`;
 }
 
@@ -152,7 +159,8 @@ function SetPasswordScreen({ onDone }) {
 
 // ── Signed-in shell ──
 function Shell({ app }) {
-  const path = useRoute();
+  const at = useRoute();
+  const path = at === "guest" ? "availability" : at; // the QR code link, opened while signed in
   const [menuOpen, setMenuOpen] = useState(false);
   const [freshUpdates, setFreshUpdates] = useState(null); // new updates for people who skip the Info page
   const visible = ROUTES.filter((r) => r.show(app));
@@ -334,9 +342,14 @@ function App() {
     return () => sub.unsubscribe();
   }, []);
 
+  const path = useRoute();
   let body;
   if (state.phase === "boot") body = html`<div class="boot">Loading…</div>`;
-  else if (state.phase === "signed-out") body = html`<${AuthScreen} ...${publicData} />`;
+  else if (state.phase === "signed-out" && path === "guest") {
+    body = html`<${GuestAvailabilityPage} groups=${publicData.groups} appName=${publicData.settings.app_name || "Coffee & Drinks"} />`;
+  } else if (state.phase === "signed-out") {
+    body = html`<${AuthScreen} key=${path} ...${publicData} initialMode=${path === "register" ? "register" : "signin"} />`;
+  }
   else if (state.phase === "recovery") {
     body = html`<${SetPasswordScreen} onDone=${() => { history.replaceState(null, "", api.appUrl()); api.auth.session().then(loadApp); }} />`;
   } else if (state.phase === "error") {

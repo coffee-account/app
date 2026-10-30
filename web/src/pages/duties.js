@@ -1,8 +1,9 @@
-import { html, useState, useMemo, useLoad, Loading, Modal, toast, useBusy, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useMemo, useEffect, useLoad, Loading, Modal, toast, useBusy, ConfirmAction, deferDelete, usePendingDeletes, loadQrCode, downloadBlob } from "../lib/ui.js";
+import { matchSheetRow } from "../lib/duty-import.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { personName, sortPeople, availabilityRules, dutyStats, dutyRound, owedTone } from "../lib/accounting.js";
-import { weeksFrom, weekLabel, mondayOf, addDays, isoWeek } from "../lib/dates.js";
+import { weeksFrom, weekLabel, mondayOf, addDays, isoWeek, fmtDate } from "../lib/dates.js";
 import { STATUS } from "./availability.js";
 import { StatusCup, CupLegend, EmptyState, WeekCalendar } from "../lib/drawings.js";
 
@@ -16,28 +17,33 @@ export function DutiesPage() {
   const [tab, setTab] = useState("schedule");
   const weeks = weeksFrom(span, addDays(mondayOf(), -7));
   const state = useLoad(async () => {
-    const [people, duties, availability, freeWeeks] = await Promise.all([
+    const [people, duties, availability, freeWeeks, guests] = await Promise.all([
       api.listDirectory(),
       manager ? api.listAllDuties() : api.listDuties(weeks[0], weeks[weeks.length - 1]),
       manager ? api.listAvailability(weeks[0], weeks[weeks.length - 1]) : Promise.resolve([]),
       api.listDutyFreeWeeks(),
+      manager ? api.listGuestAvailability() : Promise.resolve([]),
     ]);
-    return { people, duties, availability, free: new Map(freeWeeks.map((f) => [f.week_start, f])) };
+    return { people, duties, availability, guests, free: new Map(freeWeeks.map((f) => [f.week_start, f])) };
   }, [span, manager]);
   const [assigning, setAssigning] = useState(null);
+  const [showQr, setShowQr] = useState(false);
 
   return html`
     <div class="page-head"><div><h1>Kitchen duty</h1>
       <p>${manager ? "Assign people per week; each assignment e-mails them straight away." : "Who is on kitchen duty when."}</p></div>
-      ${app.isAdmin && html`<${RemindButton} />`}
+      <div class="row">
+        ${manager && html`<button class="btn" onClick=${() => setShowQr(true)}>Guest QR code</button>`}
+        ${app.isAdmin && html`<${RemindButton} />`}</div>
     </div>
+    ${showQr && html`<${GuestQr} onClose=${() => setShowQr(false)} />`}
     ${manager && html`<div class="tabs">
       <button class=${tab === "schedule" ? "active" : ""} onClick=${() => setTab("schedule")}>Schedule</button>
-      <button class=${tab === "matrix" ? "active" : ""} onClick=${() => setTab("matrix")}>Availability overview</button>
+      <button class=${tab === "matrix" ? "active" : ""} onClick=${() => setTab("matrix")}>Availability overview${state.data?.guests.length ? ` (${state.data.guests.length} to connect)` : ""}</button>
       <button class=${tab === "rounds" ? "active" : ""} onClick=${() => setTab("rounds")}>Rounds</button>
     </div>`}
     <${Loading} state=${state}>${(data) => tab === "matrix" && manager
-      ? html`<${AvailabilityMatrix} data=${data} weeks=${weeks.slice(1)} settings=${app.settings} />`
+      ? html`<div><${GuestQueue} data=${data} app=${app} reload=${state.reload} /><${AvailabilityMatrix} data=${data} weeks=${weeks.slice(1)} settings=${app.settings} /></div>`
       : tab === "rounds" && manager ? html`<${Rounds} data=${data} app=${app} reload=${state.reload} />`
       : html`<${Schedule} data=${data} weeks=${weeks} manager=${manager} app=${app}
           onAssign=${setAssigning} reload=${state.reload} />`}<//>
@@ -101,7 +107,7 @@ function Schedule({ data, weeks, manager, app, onAssign, reload }) {
           </span>`;
         }) : free ? html`<span class="muted">No kitchen duty${free.note ? ` (${free.note})` : ""}</span>` : html`<span class="muted">—</span>`}</td>
         ${manager && html`<td class="num"><span class="row end" style="gap:10px;flex-wrap:nowrap">
-          ${w >= thisWeek && html`<button class="btn-text" disabled=${busy} onClick=${() => setFree(w, !free)}>${free ? "Kitchen duty after all" : "No duty this week"}</button>`}
+          ${w >= thisWeek && html`<button class="btn-text" style="white-space:nowrap" disabled=${busy} onClick=${() => setFree(w, !free)}>${free ? "Kitchen duty after all" : "No duty this week"}</button>`}
           ${!free && html`<button class="btn small" onClick=${() => onAssign(w)}>Assign</button>`}</span></td>`}
       </tr>`;
     })}</tbody>
@@ -250,6 +256,81 @@ function Rounds({ data, app, reload }) {
             aria-label=${`Target for ${personName(p)}`}
             onChange=${(e) => setTarget(p, e.target.value)} onKeyDown=${(e) => e.key === "Enter" && e.target.blur()} /></td>
           <td class="num"><${Owed} n=${s.owed} /></td>
+        </tr>`;
+      })}</tbody>
+    </table></div>
+  </div>`;
+}
+
+/** QR code (and link) to the availability form that works without an account, for posters and lists. */
+function GuestQr({ onClose }) {
+  const link = api.guestLink();
+  const [svg, setSvg] = useState("");
+  useEffect(() => {
+    loadQrCode().then((qrcode) => {
+      const qr = qrcode(0, "M");
+      qr.addData(link);
+      qr.make();
+      setSvg(qr.createSvgTag({ cellSize: 8, margin: 2, scalable: true }));
+    }).catch((e) => toast(`Could not create the QR code: ${e.message}`, "error"));
+  }, [link]);
+  const copy = () => navigator.clipboard.writeText(link).then(() => toast("Link copied"), () => toast(link));
+  return html`<${Modal} title="Availability without an account" onClose=${onClose}>
+    <p class="lede" style="margin:4px 0 14px">Anyone can scan this to fill in their kitchen-duty availability with their name and group.
+      Answers only fill in weeks they haven't answered yet; names the app doesn't know wait here for you to connect.</p>
+    <div class="qr-box">
+      ${svg ? html`<div dangerouslySetInnerHTML=${{ __html: svg }} />` : html`<p class="muted">Creating QR code…</p>`}
+      <code class="small" style="word-break:break-all">${link}</code>
+      <div class="row">
+        <button class="btn" onClick=${copy}>Copy link</button>
+        <button class="btn" disabled=${!svg} onClick=${() => downloadBlob(new Blob([svg], { type: "image/svg+xml" }), "availability-qr.svg")}>Download (SVG)</button>
+      </div>
+    </div>
+  <//>`;
+}
+
+/** Availability sent through the guest form by names the app couldn't place. */
+function GuestQueue({ data, app, reload }) {
+  const [busy, run] = useBusy();
+  const people = useMemo(() => sortPeople(data.people, "last"), [data.people]);
+  const [pick, setPick] = useState({});
+  if (!data.guests.length) return null;
+  const canCreate = app.isAdmin || app.isGroupAdmin;
+  const suggestion = (g) => matchSheetRow({ last: g.last_name, first: g.first_name, carryover: 0 }, data.people).personId || "";
+  const connect = (g, personId, name) => run(async () => {
+    await api.connectGuestAvailability(g, personId);
+    toast(`Availability of ${g.first_name} ${g.last_name} given to ${name}`);
+    reload();
+  });
+  const create = (g) => run(async () => {
+    const p = await api.savePerson({ first_name: g.first_name, last_name: g.last_name, group_name: g.group_name || null,
+      active_coffee: false, active_drinks: false, active_duty: true, duty_rounds_before: dutyRound(app.settings) });
+    await api.connectGuestAvailability(g, p.id);
+    toast(`${g.first_name} ${g.last_name} added to the duty pool`);
+    reload();
+  });
+  const dismiss = (g) => run(async () => { await api.dismissGuestAvailability(g.id); reload(); });
+  return html`<div class="card">
+    <h2>Guest answers to connect (${data.guests.length})</h2>
+    <p class="small muted">Sent with the QR-code form under names the app doesn't know (yet). Connecting fills in only weeks the person hasn't answered.</p>
+    <div class="table-wrap"><table class="data">
+      <thead><tr><th>Name given</th><th>Sent</th><th class="num">Weeks</th><th>Person</th><th></th></tr></thead>
+      <tbody>${data.guests.map((g) => {
+        const chosen = pick[g.id] ?? suggestion(g);
+        const person = people.find((p) => p.id === chosen);
+        return html`<tr key=${g.id}>
+          <td>${g.first_name} ${g.last_name}<div class="small muted">${g.group_name || "no group"}</div></td>
+          <td>${fmtDate(g.created_at.slice(0, 10))}</td>
+          <td class="num">${g.answers.length}</td>
+          <td><select style="width:auto;max-width:240px" value=${chosen} aria-label=${`Person for ${g.first_name} ${g.last_name}`}
+            onChange=${(e) => setPick({ ...pick, [g.id]: e.target.value })}>
+            <option value="">Choose person…</option>
+            ${people.map((p) => html`<option value=${p.id}>${p.last_name}, ${p.first_name}${p.group_name ? ` (${p.group_name})` : ""}</option>`)}
+          </select></td>
+          <td class="num"><span class="row end" style="gap:8px;flex-wrap:nowrap">
+            <button class="btn small primary" disabled=${busy || !person} onClick=${() => connect(g, person.id, personName(person))}>Connect</button>
+            ${canCreate && html`<button class="btn small" disabled=${busy} onClick=${() => create(g)}>New person</button>`}
+            <${ConfirmAction} label="Dismiss" question="Dismiss these answers?" disabled=${busy} onConfirm=${() => dismiss(g)} /></span></td>
         </tr>`;
       })}</tbody>
     </table></div>
