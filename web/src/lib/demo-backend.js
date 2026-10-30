@@ -93,7 +93,7 @@ function seed() {
 const KEYS = {
   settings: ["key"], groups: ["name"], people: ["id"], profiles: ["id"], prices: ["kind", "valid_from"],
   count_sessions: ["id"], counts: ["session_id", "person_id"], payments: ["id"], list_templates: ["id"],
-  invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"], duty_free_weeks: ["week_start"], guest_availability: ["id"],
+  invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"], duty_free_weeks: ["week_start"], guest_availability: ["id"], counted_groups: ["session_id", "group_name"],
   updates: ["id"], refund_requests: ["id"], issues: ["id"],
   payer_aliases: ["id"], ignored_transactions: ["external_id"], payouts: ["id"],
 };
@@ -112,13 +112,14 @@ const DEFAULTS = {
   ignored_transactions: () => ({ created_at: new Date().toISOString() }),
   payouts: () => ({ id: uuid(), created_at: new Date().toISOString() }),
   guest_availability: () => ({ id: uuid(), status: "pending", created_at: new Date().toISOString() }),
+  counted_groups: () => ({ done_at: new Date().toISOString() }),
 };
 
 class Store {
   constructor() {
     try { this.db = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch { this.db = seed(); }
     // Demo data saved before newer features existed.
-    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts", "duty_free_weeks", "guest_availability"]) this.db[t] ??= [];
+    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts", "duty_free_weeks", "guest_availability", "counted_groups"]) this.db[t] ??= [];
     for (const p of this.db.people) if (p.active_duty === undefined) Object.assign(p, { active_duty: p.active_coffee || p.active_drinks, duty_carryover: 0, duty_rounds_before: 0 });
     this.save();
   }
@@ -205,6 +206,7 @@ class Query {
       if (this.t === "count_sessions") {
         const ids = new Set(out.map((s) => s.id));
         this.store.db.counts = this.store.db.counts.filter((c) => !ids.has(c.session_id));
+        this.store.db.counted_groups = this.store.db.counted_groups.filter((c) => !ids.has(c.session_id));
       }
       this.store.db[this.t] = rows.filter((r) => !this.match(r));
       this.store.save();

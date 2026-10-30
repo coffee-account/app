@@ -107,6 +107,11 @@ export async function saveSession({ id, kind, session_date, note }, counts, { ed
   if (drop.length) await q(sb.from("counts").delete().eq("session_id", row.id).in("person_id", drop));
   return row;
 }
+// Which groups are counted per session.
+export const listCountedGroups = () => q(sb.from("counted_groups").select("session_id, group_name, done_at"));
+export const setGroupCounted = (session_id, group_name, done) => (done
+  ? q(sb.from("counted_groups").upsert({ session_id, group_name }, { onConflict: "session_id,group_name", ignoreDuplicates: true }))
+  : q(sb.from("counted_groups").delete().eq("session_id", session_id).eq("group_name", group_name)));
 export const deleteSession = (id) => q(sb.from("count_sessions").delete().eq("id", id));
 
 // ── Payments ──

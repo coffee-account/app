@@ -10,7 +10,12 @@ const KIND_LABEL = { coffee: "Coffee", drinks: "Drinks" };
 export function CountingPage() {
   const app = useApp();
   const group = app.isAdmin ? null : app.managedGroup; // group admins count their group only
-  const state = useLoad(() => api.loadLedgerData(undefined, group));
+  const state = useLoad(async () => {
+    const [ledger, directory, groups, counted] = await Promise.all([
+      api.loadLedgerData(undefined, group), api.listDirectory(), api.listGroups(), api.listCountedGroups(),
+    ]);
+    return { ...ledger, directory, groups, counted };
+  });
   const [editing, setEditing] = useState(null);
   const isPending = usePendingDeletes();
 
@@ -32,13 +37,14 @@ export function CountingPage() {
           No counts yet. After collecting a paper list, enter its marks here.<//>`;
       }
       return html`<div class="table-wrap"><table class="data">
-        <thead><tr><th>Date</th><th>List</th><th class="num">People</th><th class="num">Marks</th><th class="num">Price</th><th class="num">Value</th><th>Note</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>List</th><th>Groups counted</th><th class="num">People</th><th class="num">Marks</th><th class="num">Price</th><th class="num">Value</th><th>Note</th><th></th></tr></thead>
         <tbody>${sessions.map((s) => {
           const rows = data.counts.filter((c) => c.session_id === s.id && c.quantity > 0);
           const marks = rows.reduce((n, c) => n + c.quantity, 0);
           const unit = priceAt(data.prices, s.kind, s.session_date);
           return html`<tr style="cursor:pointer" tabindex="0" onClick=${() => setEditing(s)} onKeyDown=${(e) => e.key === "Enter" && setEditing(s)}>
             <td>${fmtDate(s.session_date)}</td><td><span class="badge">${KIND_LABEL[s.kind]}</span></td>
+            <td onClick=${(e) => e.stopPropagation()} onKeyDown=${(e) => e.stopPropagation()}><${CountedGroups} session=${s} data=${data} app=${app} reload=${state.reload} /></td>
             <td class="num">${rows.length}</td><td class="num">${marks}</td><td class="num">${fmtEUR(unit)}</td><td class="num">${fmtEUR(marks * unit)}</td>
             <td class="small muted">${s.note || ""}</td>
             <td class="num"><span class="row-actions"><button class="btn-text">Open</button></span></td>
@@ -46,6 +52,29 @@ export function CountingPage() {
         })}</tbody>
       </table></div>`;
     }}<//>`;
+}
+
+/**
+ * One tick per group on the list (groups with someone on the coffee or drinks list), so the
+ * people counting can see which groups are still left. Admins tick any group, group admins their own.
+ */
+function CountedGroups({ session, data, app, reload }) {
+  const [busy, run] = useBusy();
+  const active = (p) => (session.kind === "coffee" ? p.active_coffee : p.active_drinks);
+  const onList = new Set(data.directory.filter(active).map((p) => p.group_name).filter(Boolean));
+  const done = new Set(data.counted.filter((c) => c.session_id === session.id).map((c) => c.group_name));
+  const groups = data.groups.map((g) => g.name).filter((g) => onList.has(g) || done.has(g));
+  if (!groups.length) return html`<span class="muted">—</span>`;
+  const toggle = (g) => run(async () => { await api.setGroupCounted(session.id, g, !done.has(g)); reload(); });
+  return html`<div class="counted">
+    <span class="small ${done.size >= groups.length ? "pos" : "muted"}">${groups.filter((g) => done.has(g)).length} of ${groups.length}</span>
+    ${groups.map((g) => {
+      const mine = app.isAdmin || g === app.managedGroup;
+      return html`<label class="counted-chip ${done.has(g) ? "on" : ""} ${mine ? "" : "readonly"}"
+        title=${mine ? (done.has(g) ? `${g} is counted; untick to undo` : `Tick when ${g} is counted`) : `${g}: ${done.has(g) ? "counted" : "not counted yet"}`}>
+        <input type="checkbox" checked=${done.has(g)} disabled=${!mine || busy} onChange=${() => toggle(g)} />${g}</label>`;
+    })}
+  </div>`;
 }
 
 function SessionEditor({ session, data, onClose, onReload }) {

@@ -57,7 +57,7 @@ Then open <http://localhost:8000>. Run it from the project folder. It serves `we
 ### 1. Supabase project
 
 1. Create a free account at <https://supabase.com>, then a new project. Choose region **Central EU (Frankfurt)** for GDPR.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261106000000_guest_answers_replace.sql`: guest answers replace earlier ones). Each script only needs to run once per project.
+2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261107000000_counted_groups.sql`: which groups are counted per session). Each script only needs to run once per project.
 3. Under **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 
 ### 2. Email sending

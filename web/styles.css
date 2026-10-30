@@ -388,3 +388,8 @@ input[aria-invalid="true"] { border-color: var(--cherry); }
 .paper table.list td.pickable:hover { outline: 1.5px dashed var(--ink-mute); outline-offset: -2px; }
 .paper table.list td.picked { outline: 2px solid var(--cherry); outline-offset: -2px; }
 .paper table.list .small-text { display: inline-block; line-height: 1.15; transform-origin: 0 50%; white-space: inherit; vertical-align: middle; }
+.counted { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; min-width: 340px; max-width: 560px; }
+.counted-chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px 0 6px; border-radius: 999px; background: var(--tint); font-size: 12px; cursor: pointer; white-space: nowrap; }
+.counted-chip input { margin: 0; width: 13px; height: 13px; }
+.counted-chip.on { background: var(--ok); color: var(--cup); }
+.counted-chip.readonly { cursor: default; }
