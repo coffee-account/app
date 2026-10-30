@@ -37,14 +37,14 @@ export function CountingPage() {
           No counts yet. After collecting a paper list, enter its marks here.<//>`;
       }
       return html`<div class="table-wrap"><table class="data">
-        <thead><tr><th>Date</th><th>List</th><th>Groups counted</th><th class="num">People</th><th class="num">Marks</th><th class="num">Price</th><th class="num">Value</th><th>Note</th><th></th></tr></thead>
+        <thead><tr><th>Date</th><th>List</th><th>Not counted yet</th><th class="num">People</th><th class="num">Marks</th><th class="num">Price</th><th class="num">Value</th><th>Note</th><th></th></tr></thead>
         <tbody>${sessions.map((s) => {
           const rows = data.counts.filter((c) => c.session_id === s.id && c.quantity > 0);
           const marks = rows.reduce((n, c) => n + c.quantity, 0);
           const unit = priceAt(data.prices, s.kind, s.session_date);
           return html`<tr style="cursor:pointer" tabindex="0" onClick=${() => setEditing(s)} onKeyDown=${(e) => e.key === "Enter" && setEditing(s)}>
             <td>${fmtDate(s.session_date)}</td><td><span class="badge">${KIND_LABEL[s.kind]}</span></td>
-            <td onClick=${(e) => e.stopPropagation()} onKeyDown=${(e) => e.stopPropagation()}><${CountedGroups} session=${s} data=${data} app=${app} reload=${state.reload} /></td>
+            <td><${MissingGroups} session=${s} data=${data} /></td>
             <td class="num">${rows.length}</td><td class="num">${marks}</td><td class="num">${fmtEUR(unit)}</td><td class="num">${fmtEUR(marks * unit)}</td>
             <td class="small muted">${s.note || ""}</td>
             <td class="num"><span class="row-actions"><button class="btn-text">Open</button></span></td>
@@ -54,27 +54,21 @@ export function CountingPage() {
     }}<//>`;
 }
 
-/**
- * One tick per group on the list (groups with someone on the coffee or drinks list), so the
- * people counting can see which groups are still left. Admins tick any group, group admins their own.
- */
-function CountedGroups({ session, data, app, reload }) {
-  const [busy, run] = useBusy();
-  const active = (p) => (session.kind === "coffee" ? p.active_coffee : p.active_drinks);
+/** Groups with someone on this session's list (coffee or drinks), and those already ticked as counted. */
+function groupProgress(session, kind, data) {
+  const active = (p) => (kind === "coffee" ? p.active_coffee : p.active_drinks);
   const onList = new Set(data.directory.filter(active).map((p) => p.group_name).filter(Boolean));
   const done = new Set(data.counted.filter((c) => c.session_id === session.id).map((c) => c.group_name));
-  const groups = data.groups.map((g) => g.name).filter((g) => onList.has(g) || done.has(g));
+  return { groups: data.groups.map((g) => g.name).filter((g) => onList.has(g) || done.has(g)), done };
+}
+
+/** Overview: only the groups still to be counted. */
+function MissingGroups({ session, data }) {
+  const { groups, done } = groupProgress(session, session.kind, data);
+  const missing = groups.filter((g) => !done.has(g));
   if (!groups.length) return html`<span class="muted">—</span>`;
-  const toggle = (g) => run(async () => { await api.setGroupCounted(session.id, g, !done.has(g)); reload(); });
-  return html`<div class="counted">
-    <span class="small ${done.size >= groups.length ? "pos" : "muted"}">${groups.filter((g) => done.has(g)).length} of ${groups.length}</span>
-    ${groups.map((g) => {
-      const mine = app.isAdmin || g === app.managedGroup;
-      return html`<label class="counted-chip ${done.has(g) ? "on" : ""} ${mine ? "" : "readonly"}"
-        title=${mine ? (done.has(g) ? `${g} is counted; untick to undo` : `Tick when ${g} is counted`) : `${g}: ${done.has(g) ? "counted" : "not counted yet"}`}>
-        <input type="checkbox" checked=${done.has(g)} disabled=${!mine || busy} onChange=${() => toggle(g)} />${g}</label>`;
-    })}
-  </div>`;
+  if (!missing.length) return html`<span class="small pos">✓ all groups counted</span>`;
+  return html`<div class="missing-groups">${missing.map((g) => html`<span class="badge warn">${g}</span>`)}</div>`;
 }
 
 function SessionEditor({ session, data, onClose, onReload }) {
@@ -88,6 +82,11 @@ function SessionEditor({ session, data, onClose, onReload }) {
   const [values, setValues] = useState(() => new Map(original));
   const [extra, setExtra] = useState([]);
   const [busy, run] = useBusy();
+  // "Counted" ticks per group, saved together with the counts. Admins tick any group, group admins their own.
+  const [doneBefore] = useState(() => groupProgress(session, session.kind, data).done);
+  const [done, setDone] = useState(() => new Set(doneBefore));
+  const mayTick = (g) => !!g && (app.isAdmin || g === app.managedGroup);
+  const toggleDone = (g) => { dirty.mark(); setDone((d) => { const n = new Set(d); if (n.has(g)) n.delete(g); else n.add(g); return n; }); };
   const flag = meta.kind === "coffee" ? "active_coffee" : "active_drinks";
   const listed = sortPeople(data.people.filter((p) => p[flag] || values.has(p.id) || extra.includes(p.id)), "group");
   const others = sortPeople(data.people.filter((p) => !listed.includes(p)), "last");
@@ -96,6 +95,7 @@ function SessionEditor({ session, data, onClose, onReload }) {
   const dirty = useDirtyGuard();
   const changed = new Set([...new Set([...values.keys(), ...original.keys()])]
     .filter((id) => (values.get(id) || 0) !== (original.get(id) || 0)));
+  const ticksChanged = [...new Set([...done, ...doneBefore])].filter((g) => mayTick(g) && done.has(g) !== doneBefore.has(g));
 
   const setQty = (id, v) => {
     dirty.mark();
@@ -103,7 +103,8 @@ function SessionEditor({ session, data, onClose, onReload }) {
   };
   const save = () => run(async () => {
     const counts = new Map(listed.map((p) => [p.id, values.get(p.id) || 0]));
-    await api.saveSession(meta, counts, { editSession: app.isAdmin });
+    const row = await api.saveSession(meta, counts, { editSession: app.isAdmin });
+    for (const g of ticksChanged) await api.setGroupCounted(row.id, g, done.has(g));
     dirty.clear();
     toast("Counts saved");
     onClose();
@@ -138,7 +139,11 @@ function SessionEditor({ session, data, onClose, onReload }) {
     <div class="table-wrap"><table class="data">
       <thead><tr><th>Name</th><th>Group</th><th class="num">Marks</th><th class="num">Amount</th></tr></thead>
       <tbody>${listed.map((p) => {
-        const header = p.group_name !== lastGroup ? html`<tr class="group-row"><td colspan="4">${p.group_name || "No group"}</td></tr>` : null;
+        const g = p.group_name;
+        const header = g !== lastGroup ? html`<tr class="group-row"><td colspan="3">${g || "No group"}</td>
+          <td class="num">${mayTick(g) ? html`<label class="check group-done ${done.has(g) ? "on" : ""}"><input type="checkbox" checked=${done.has(g)}
+              onChange=${() => toggleDone(g)} /> Counted</label>`
+            : g && done.has(g) ? html`<span class="small pos">✓ counted</span>` : null}</td></tr>` : null;
         lastGroup = p.group_name;
         const v = values.get(p.id) || 0;
         return html`${header}<tr class=${p[flag] ? "" : "inactive"}>
@@ -155,7 +160,7 @@ function SessionEditor({ session, data, onClose, onReload }) {
       </select>
       <span class="spacer"></span>
       ${meta.id && app.isAdmin && html`<${ConfirmAction} label="Delete session" question="Delete this whole count session?" disabled=${busy} onConfirm=${remove} />`}
-      ${changed.size > 0 && html`<span class="small muted">${changed.size} change${changed.size > 1 ? "s" : ""} not saved</span>`}
+      ${changed.size + ticksChanged.length > 0 && html`<span class="small muted">${changed.size + ticksChanged.length} change${changed.size + ticksChanged.length > 1 ? "s" : ""} not saved</span>`}
       <button class="btn primary" disabled=${busy} onClick=${save}>Save counts</button>
     </div>
     `;
