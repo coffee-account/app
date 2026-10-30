@@ -383,3 +383,7 @@ input[aria-invalid="true"] { border-color: var(--cherry); }
 .update-dialog .update:first-child { border-top: 0; padding-top: 4px; }
 .payout-what { display: grid; gap: 6px; min-width: 240px; }
 .target-input { width: 64px; text-align: right; padding: 2px 6px; height: 28px; }
+.box-size { gap: 8px; flex-wrap: wrap; margin-bottom: 8px; padding: 8px 12px; border: 1px solid var(--rule-soft); border-radius: 12px; background: var(--cup); position: sticky; top: 0; z-index: 2; }
+.paper table.list td.pickable { cursor: pointer; }
+.paper table.list td.pickable:hover { outline: 1.5px dashed var(--ink-mute); outline-offset: -2px; }
+.paper table.list td.picked { outline: 2px solid var(--cherry); outline-offset: -2px; }

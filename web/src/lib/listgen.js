@@ -36,7 +36,7 @@ export function defaultConfig(kind) {
     headerTint: 10, // % grey of the table header row
     fiveLines: true, // heavier line after every fifth person, so people stay in their row
     wordArial: false, // use Arial in the Word file instead of the Playfulcrema fonts
-    fitText: true, // shrink the font of a cell whose text wouldn't fit its box
+    cellSizes: {}, // "personId:columnKey" → font size (pt) of that one box, set by clicking it in the preview
     sortBy: "group",
     showGroup: true,
     shading: "none", // "none" | "people" (alternate people) | "groups" (alternate groups)
@@ -67,7 +67,7 @@ export function normalizeConfig(kind, cfg) {
   // Plain-text intro/footer with one paragraph colour → runs.
   if (cfg && "intro" in cfg) legacy.intro = toRuns(cfg.intro, cfg.introColor);
   if (cfg && "footer" in cfg) legacy.footer = toRuns(cfg.footer, cfg.footerColor);
-  const { introColor, footerColor, ...rest } = cfg || {};
+  const { introColor, footerColor, fitText, ...rest } = cfg || {}; // fitText: automatic sizing, replaced by cellSizes
   return {
     ...d, ...rest, ...legacy,
     rowsPerPerson: cfg?.rowsPerPerson ?? {},
@@ -79,6 +79,7 @@ export function normalizeConfig(kind, cfg) {
       (c.label === "Kitchen duties" && Number(c.width) === 20 && c.fill !== "duties" ? { ...c, width: 26, fill: "duties" } : c)),
     excluded: cfg?.excluded ?? [],
     included: cfg?.included ?? [],
+    cellSizes: cfg?.cellSizes ?? {},
   };
 }
 
@@ -157,38 +158,13 @@ function dutyText(personId, duties, fromDate) {
 /** Duty cells use a smaller font so two weeks fit in one row. */
 export const dutyFontSize = (cfg) => Math.max(6, Math.round(cfg.fontSize * 0.8 * 2) / 2);
 
-const PT = 0.3528; // mm per point
-let measureCtx;
-const emWidth = new Map(); // "font|text" → width in em
-document.fonts?.ready.then(() => emWidth.clear()); // widths measured before the web fonts arrived are off
-function textEm(text, family) {
-  const key = `${family}|${text}`;
-  if (!emWidth.has(key)) {
-    measureCtx ??= document.createElement("canvas").getContext("2d");
-    measureCtx.font = `100px "${family}", Arial, sans-serif`;
-    emWidth.set(key, measureCtx.measureText(text).width / 100);
-  }
-  return emWidth.get(key);
-}
+export const cellKey = (personId, c) => `${personId}:${c.key}`;
 
-export const MIN_FIT_SIZE = 2; // pt
-
-/**
- * Font size (pt) for a table cell: the normal size, or smaller (in half points, down to 2 pt) when
- * "fit text" is on and the text would be wider than the cell or have more lines than fit its height.
- * Widths are measured with the wider of the print font and Arial (Word's usual fallback when the print
- * font isn't installed), so the text stays on one line there too.
- */
-export function cellFontSize(cfg, c, text, span = 1) {
+/** Font size (pt) of a table box: its own size if one was set, else the column's normal size. */
+export function cellFontSize(cfg, c, row) {
   const base = c.fill === "duties" ? dutyFontSize(cfg) : Number(cfg.fontSize);
-  if (!cfg.fitText || !text) return base;
-  const lines = String(text).split("\n");
-  const em = (l) => Math.max(textEm(l, cfg.wordArial ? "Arial" : PRINT_FONTS.data), textEm(l, "Arial"));
-  const width = c.width - 2.4; // cell padding: 1.2 mm each side in the preview, 1 mm in Word
-  const widest = Math.max(...lines.map(em)) * 1.01;
-  const byWidth = widest > 0 ? width / (widest * PT) : base;
-  const byHeight = (cfg.rowHeight * span - 0.8) / (lines.length * 1.15 * PT);
-  return Math.max(MIN_FIT_SIZE, Math.min(base, Math.floor(Math.min(byWidth, byHeight) * 2) / 2));
+  const own = row?.pid ? Number(cfg.cellSizes?.[cellKey(row.pid, c)]) : 0;
+  return own > 0 ? own : base;
 }
 
 /**
@@ -214,7 +190,7 @@ export function buildRows(kind, people, cfg, duties = [], fromDate = isoDate()) 
     const span = Math.max(1, Math.min(10, Number(cfg.rowsPerPerson?.[p.id]) || 1));
     for (let i = 0; i < span; i++) {
       rows.push({
-        cells: cols.map((c) => (i === 0 ? value(p, c) : c.tally ? "" : null)),
+        pid: p.id, cells: cols.map((c) => (i === 0 ? value(p, c) : c.tally ? "" : null)),
         span: i === 0 ? span : 0, cont: i > 0, band: cfg.shading === "none" ? 0 : band,
       });
     }
@@ -318,7 +294,7 @@ export async function exportDocx(kind, cfg, cols, rows, date) {
       alignment: head && c.tally ? d.AlignmentType.CENTER : d.AlignmentType.LEFT,
       children: [new d.TextRun({
         text: part, bold: head, font: font.data,
-        size: (head ? cfg.headerSize : cellFontSize(cfg, c, text, row.span || 1)) * 2,
+        size: (head ? cfg.headerSize : cellFontSize(cfg, c, row)) * 2,
       })],
     })),
   });

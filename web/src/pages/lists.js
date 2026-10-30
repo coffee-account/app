@@ -1,8 +1,8 @@
-import { html, useState, useRef, useEffect, useLoad, Loading, Field, toast, useBusy, downloadBlob, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useRef, useLoad, Loading, Field, toast, useBusy, downloadBlob, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import * as api from "../lib/api.js";
 import { sortPeople } from "../lib/accounting.js";
 import { isoDate, addDays } from "../lib/dates.js";
-import { defaultConfig, normalizeConfig, buildRows, paginate, listTitle, exportDocx, PAGE, listPeople, shadeColor, headerTintColor, runLines, runsText, cellFontSize, MIN_FIT_SIZE } from "../lib/listgen.js";
+import { defaultConfig, normalizeConfig, buildRows, paginate, listTitle, exportDocx, PAGE, listPeople, shadeColor, headerTintColor, runLines, runsText, cellFontSize, cellKey } from "../lib/listgen.js";
 import { RichText } from "../lib/richtext.js";
 
 export function ListsPage() {
@@ -33,6 +33,7 @@ function DesignerBody({ kind, data, reload }) {
   const [cfg, setCfg] = useState(() => normalizeConfig(kind, initial?.config));
   const [date, setDate] = useState(isoDate());
   const [zoom, setZoom] = useState(0.7);
+  const [picked, setPicked] = useState([]); // cellKey()s of the boxes whose font size is being changed
   const [editorKey, setEditorKey] = useState(0); // remounts the text editors when the config is replaced
   const [busy, run] = useBusy();
   const previewRef = useRef(null);
@@ -88,6 +89,7 @@ function DesignerBody({ kind, data, reload }) {
     root.className = "print-root";
     root.innerHTML = previewRef.current.innerHTML;
     root.querySelectorAll(".paper").forEach((p) => { p.style.zoom = ""; });
+    root.querySelectorAll(".picked").forEach((el) => el.classList.remove("picked"));
     const style = document.createElement("style");
     const [w, h] = PAGE[cfg.orientation];
     style.textContent = `@page { size: ${w}mm ${h}mm; margin: 0; }`;
@@ -182,8 +184,6 @@ function DesignerBody({ kind, data, reload }) {
         <div class="row" style="margin:10px 0">
           <label class="check"><input type="checkbox" checked=${cfg.showGroup} onChange=${(e) => set({ showGroup: e.target.checked })} /> Group column</label>
           <label class="check"><input type="checkbox" checked=${cfg.fiveLines} onChange=${(e) => set({ fiveLines: e.target.checked })} /> Heavier line after every 5 people</label>
-          <label class="check" title="Long names and duty dates get a smaller font instead of being cut off"><input type="checkbox" checked=${cfg.fitText}
-            onChange=${(e) => set({ fitText: e.target.checked })} /> Shrink text to fit its box</label>
         </div>
         <div class="form-grid" style="margin-bottom:10px">
           <${Field} label="Header row grey (%)"><input type="number" min="0" max="30" value=${cfg.headerTint} onInput=${(e) => set({ headerTint: num(e) })} /><//>
@@ -267,8 +267,12 @@ function DesignerBody({ kind, data, reload }) {
       <div class="row" style="margin-bottom:8px"><span class="small muted">Preview</span><span class="spacer"></span>
         <select style="max-width:110px" value=${zoom} onChange=${(e) => setZoom(Number(e.target.value))} aria-label="Zoom">
           ${[0.5, 0.7, 0.85, 1].map((z) => html`<option value=${z}>${Math.round(z * 100)}%</option>`)}</select></div>
+      <${BoxSize} cfg=${cfg} set=${set} cols=${cols} rows=${rows} people=${data.people} picked=${picked} setPicked=${setPicked} />
       <div class="preview-scroll"><div ref=${previewRef}>
-        ${pages.map((pageRows, i) => html`<${Paper} cfg=${cfg} cols=${cols} rows=${pageRows} first=${i === 0} date=${date} zoom=${zoom} />`)}
+        ${pages.map((pageRows, i) => html`<${Paper} cfg=${cfg} cols=${cols} rows=${pageRows} first=${i === 0} date=${date} zoom=${zoom}
+          picked=${picked} onPick=${(key, add) => setPicked((sel) => (add
+            ? (sel.includes(key) ? sel.filter((k) => k !== key) : [...sel, key])
+            : (sel.length === 1 && sel[0] === key ? [] : [key])))} />`)}
       </div></div>
     </div>
   </div>`;
@@ -283,20 +287,61 @@ function TextStyle({ cfg, set, prefix }) {
   </div>`;
 }
 
-function Paper({ cfg, cols, rows, first, date, zoom }) {
-  const table = useRef(null);
-  // Safety net for "fit text": any cell still wider than its box gets smaller in half points until it fits.
-  useEffect(() => {
-    if (!cfg.fitText || !table.current) return;
-    for (const td of table.current.querySelectorAll("tbody td[data-size]")) {
-      let size = Number(td.dataset.size);
-      td.style.fontSize = `${size}pt`;
-      while (td.scrollWidth > td.clientWidth && size > MIN_FIT_SIZE) {
-        size -= 0.5;
-        td.style.fontSize = `${size}pt`;
-      }
+/** Font size of the boxes picked in the preview (one, several, or a whole column), plus a way back to normal. */
+function BoxSize({ cfg, set, cols, rows, people, picked, setPicked }) {
+  const custom = Object.keys(cfg.cellSizes || {}).length;
+  const resetAll = custom > 0 && html`<button class="btn-text" onClick=${() => { set({ cellSizes: {} }); setPicked([]); }}>
+    Reset all ${custom} box size${custom > 1 ? "s" : ""}</button>`;
+  const byKey = new Map(cols.map((c) => [c.key, c]));
+  const boxes = picked.map((key) => {
+    const i = key.lastIndexOf(":");
+    return { key, pid: key.slice(0, i), c: byKey.get(key.slice(i + 1)) };
+  }).filter((b) => b.c);
+  if (!boxes.length) {
+    return html`<div class="box-size row"><span class="small muted">Click a box in the preview to change its font size;
+      Ctrl/⌘- or Shift-click to pick several.</span><span class="spacer"></span>${resetAll}</div>`;
+  }
+  const normal = (c) => cellFontSize({ ...cfg, cellSizes: {} }, c);
+  const sizeOf = (b) => cellFontSize(cfg, b.c, { pid: b.pid });
+  const sizes = boxes.map(sizeOf);
+  const same = sizes.every((x) => x === sizes[0]);
+  // fn gets each box's current size and returns its new one; sizes equal to the column's normal size aren't stored.
+  const apply = (fn) => {
+    const next = { ...cfg.cellSizes };
+    for (const b of boxes) {
+      const n = Math.min(24, Math.max(3, Math.round(fn(sizeOf(b)) * 2) / 2));
+      if (n === normal(b.c)) delete next[b.key];
+      else next[b.key] = n;
     }
-  });
+    set({ cellSizes: next });
+  };
+  const resetPicked = () => {
+    const next = { ...cfg.cellSizes };
+    for (const b of boxes) delete next[b.key];
+    set({ cellSizes: next });
+  };
+  const columnKeys = [...new Set(boxes.map((b) => b.c.key))];
+  const pids = [...new Set(rows.filter((r) => r.pid && !r.cont).map((r) => r.pid))];
+  const wholeColumn = columnKeys.length === 1 && pids.map((pid) => cellKey(pid, byKey.get(columnKeys[0])));
+  const p = boxes.length === 1 && people.find((x) => x.id === boxes[0].pid);
+  return html`<div class="box-size row">
+    <span>${boxes.length === 1 ? html`<b>${p ? `${p.first_name} ${p.last_name}` : "Box"}</b> · ${boxes[0].c.label}`
+      : html`<b>${boxes.length} boxes</b>${columnKeys.length === 1 ? ` · ${boxes[0].c.label}` : ""}`}</span>
+    ${wholeColumn && wholeColumn.length > boxes.length && html`<button class="btn-text" onClick=${() => setPicked(wholeColumn)}>
+      Whole column (${wholeColumn.length})</button>`}
+    <span class="spacer"></span>
+    <button class="btn small" aria-label="Smaller" onClick=${() => apply((x) => x - 0.5)}>−</button>
+    <input type="number" min="3" max="24" step="0.5" value=${same ? sizes[0] : ""} placeholder="mixed" aria-label="Font size (pt)" style="width:72px"
+      onInput=${(e) => e.target.value && apply(() => Number(e.target.value))} />
+    <span class="small muted">pt</span>
+    <button class="btn small" aria-label="Larger" onClick=${() => apply((x) => x + 0.5)}>+</button>
+    ${boxes.some((b) => cfg.cellSizes?.[b.key]) && html`<button class="btn-text" onClick=${resetPicked}>Normal size</button>`}
+    ${resetAll}
+    <button class="btn-text" onClick=${() => setPicked([])}>Done</button>
+  </div>`;
+}
+
+function Paper({ cfg, cols, rows, first, date, zoom, picked, onPick }) {
   const [w, h] = PAGE[cfg.orientation];
   const m = cfg.margins;
   const shade = shadeColor(cfg);
@@ -307,7 +352,7 @@ function Paper({ cfg, cols, rows, first, date, zoom }) {
       style=${`width:${cfg.image.widthMm}mm;top:${m.top}mm;${cfg.image.position === "left" ? "left" : "right"}:${m.side}mm`} />`}
     ${first && title && html`<div class="list-title" style=${`font-size:${cfg.titleSize}pt`}>${title}</div>`}
     ${first && runsText(cfg.intro) && html`<div class="list-intro" style=${`font-size:${cfg.introSize}pt;text-align:${cfg.introAlign};${cfg.image ? `margin-${cfg.image.position}:${cfg.image.widthMm + 3}mm;min-height:${Math.max(0, (cfg.image.heightMm || 0) - cfg.titleSize * 0.46)}mm` : ""}`}><${Runs} value=${cfg.intro} /></div>`}
-    <table class="list" ref=${table} style=${`font-size:${cfg.fontSize}pt;width:${cols.reduce((s, c) => s + c.width, 0)}mm`}>
+    <table class="list" style=${`font-size:${cfg.fontSize}pt;width:${cols.reduce((s, c) => s + c.width, 0)}mm`}>
       <colgroup>${cols.map((c) => html`<col style=${`width:${c.width}mm`} />`)}</colgroup>
       <thead><tr style=${`height:${cfg.rowHeight}mm`}>${cols.map((c) => html`<th class=${c.tally ? "tally" : ""}
         style=${`font-size:${cfg.headerSize}pt${Number(cfg.headerTint) > 0 ? `;background:${headerTintColor(cfg)}` : ""}`}>${c.label}</th>`)}</tr></thead>
@@ -318,9 +363,14 @@ function Paper({ cfg, cols, rows, first, date, zoom }) {
           if (v === null) return null;
           const merged = !cols[j].tally && r.span > 1;
           const duty = cols[j].fill === "duties";
-          const size = cols[j].tally ? null : cellFontSize(cfg, cols[j], v, merged ? r.span : 1);
-          return html`<td rowspan=${merged ? r.span : undefined} class="${merged && blockFive ? "five" : ""} ${duty ? "duty" : ""}"
-            data-size=${size && v ? size : undefined} style=${size ? `font-size:${size}pt` : undefined}>${v}</td>`;
+          const size = cols[j].tally ? null : cellFontSize(cfg, cols[j], r);
+          const pickable = !cols[j].tally && r.pid && !r.cont;
+          const isPicked = pickable && picked.includes(cellKey(r.pid, cols[j]));
+          return html`<td rowspan=${merged ? r.span : undefined}
+            class="${merged && blockFive ? "five" : ""} ${duty ? "duty" : ""} ${pickable ? "pickable" : ""} ${isPicked ? "picked" : ""}"
+            title=${pickable ? "Click to change this box's font size" : undefined}
+            onClick=${pickable ? (e) => onPick(cellKey(r.pid, cols[j]), e.metaKey || e.ctrlKey || e.shiftKey) : undefined}
+            style=${size && size !== Number(cfg.fontSize) ? `font-size:${size}pt` : undefined}>${v}</td>`;
         })}</tr>`;
       })}</tbody>
     </table>
