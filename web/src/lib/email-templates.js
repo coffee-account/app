@@ -2,18 +2,19 @@
 // email_templates table; these defaults are what the migration seeds (keep both in step) and what the demo uses.
 // Text format: Markdown as on the Info page. {placeholder} is filled in per e-mail; a line whose
 // placeholders are all empty is left out, and a placeholder alone on a line can stand for a block (a table or list).
+// A single line break stays a line break; a blank line starts a new paragraph.
 
 const DUTY_LINK = "https://pad.gwdg.de/r4sTfbuzTH6UCXbkppGjJA?both#Kitchen-duties";
 
 export const EMAIL_TEMPLATES = [
   {
     key: "duty_assigned", editor: "duty", label: "Kitchen duty assigned", to: "The person assigned, right away",
-    vars: { first_name: "Ada", week: "week 47 (17 Nov – 23 Nov)", mates: "Bob Builder", note: "Only Mon–Wed", app_url: "https://example.org/" },
+    vars: { first_name: "Ada", week: "week 47 (17 Nov – 23 Nov)", others_on_duty: "Bob Builder, Clara Weiss", note: "Only Mon–Wed", app_url: "https://example.org/" },
     subject: "Kitchen duty: {week}",
     body: `Hi {first_name},
 
 you have been assigned to kitchen duty in **{week}**.
-You share it with {mates}.
+On duty with you: {others_on_duty}.
 Note: {note}
 
 What to do during your week: [Kitchen duties](${DUTY_LINK})
@@ -28,10 +29,10 @@ If you cannot make it, please swap with someone and tell the duty managers.`,
   },
   {
     key: "duty_reminder", editor: "duty", label: "Kitchen duty this week", to: "Everyone on duty, Monday morning",
-    vars: { first_name: "Ada", week: "week 47 (17 Nov – 23 Nov)", mates: "Bob Builder", app_url: "https://example.org/" },
+    vars: { first_name: "Ada", week: "week 47 (17 Nov – 23 Nov)", others_on_duty: "Bob Builder, Clara Weiss", app_url: "https://example.org/" },
     subject: "Reminder: kitchen duty this week ({week})",
     body: `Hi {first_name}, a reminder that you are on kitchen duty in **{week}**.
-You share it with {mates}.
+On duty with you: {others_on_duty}.
 
 What to do during your week: [Kitchen duties](${DUTY_LINK})`,
   },

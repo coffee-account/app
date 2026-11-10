@@ -45,7 +45,7 @@ insert into public.email_templates (key, subject, body) values
   ('duty_assigned', $s$Kitchen duty: {week}$s$, $b$Hi {first_name},
 
 you have been assigned to kitchen duty in **{week}**.
-You share it with {mates}.
+On duty with you: {others_on_duty}.
 Note: {note}
 
 What to do during your week: [Kitchen duties](https://pad.gwdg.de/r4sTfbuzTH6UCXbkppGjJA?both#Kitchen-duties)
@@ -53,7 +53,7 @@ What to do during your week: [Kitchen duties](https://pad.gwdg.de/r4sTfbuzTH6UCX
 If you cannot make it, please swap with someone and tell the duty managers.$b$),
   ('duty_removed', $s$Kitchen duty cancelled: {week}$s$, $b$Hi {first_name}, you are no longer on kitchen duty in **{week}**.$b$),
   ('duty_reminder', $s$Reminder: kitchen duty this week ({week})$s$, $b$Hi {first_name}, a reminder that you are on kitchen duty in **{week}**.
-You share it with {mates}.
+On duty with you: {others_on_duty}.
 
 What to do during your week: [Kitchen duties](https://pad.gwdg.de/r4sTfbuzTH6UCXbkppGjJA?both#Kitchen-duties)$b$),
   ('availability_reminder', $s$Reminder: please fill in your kitchen-duty availability$s$, $b$Hi {first_name},

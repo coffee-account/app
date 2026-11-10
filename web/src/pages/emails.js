@@ -31,7 +31,9 @@ function EmailTemplate({ meta, row, reload }) {
   const [draft, setDraft] = useState(null); // null | { subject, body }
   const [busy, run] = useBusy();
   const current = row || meta;
-  const fill = (text) => String(text).replace(/\{(\w+)\}/g, (m, k) => (k in meta.vars ? meta.vars[k] : m));
+  // Older saved texts may still say {mates}; it is filled in like {others_on_duty}.
+  const vars = "others_on_duty" in meta.vars ? { ...meta.vars, mates: meta.vars.others_on_duty } : meta.vars;
+  const fill = (text) => String(text).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
   const save = () => run(async () => {
     if (!row) throw new Error("This e-mail text is missing in the database. Run the latest migration first.");
     await api.saveEmailTemplate(meta.key, draft.subject.trim(), draft.body);
@@ -46,10 +48,10 @@ function EmailTemplate({ meta, row, reload }) {
     ${draft ? html`<div class="info-editor" style="margin-top:12px">
         <div class="grid">
           <${Field} label="Subject"><input value=${draft.subject} onInput=${(e) => setDraft({ ...draft, subject: e.target.value })} /><//>
-          <${Field} label="Text" hint=${`Placeholders: ${Object.keys(meta.vars).map((k) => `{${k}}`).join(", ")}. A line whose placeholders are empty is left out.`}>
+          <${Field} label="Text" hint=${`Placeholders: ${Object.keys(meta.vars).map((k) => `{${k}}`).join(", ")}. A new line stays a new line; a blank line starts a new paragraph. A line whose placeholders are empty is left out.`}>
             <textarea rows="12" value=${draft.body} onInput=${(e) => setDraft({ ...draft, body: e.target.value })}></textarea><//>
         </div>
-        <div class="prose preview"><p><b>${fill(draft.subject)}</b></p><div dangerouslySetInnerHTML=${{ __html: markdown(draft.body, meta.vars) }}></div></div>
+        <div class="prose preview"><p><b>${fill(draft.subject)}</b></p><div dangerouslySetInnerHTML=${{ __html: markdown(draft.body, vars, { breaks: true }) }}></div></div>
         <div class="row" style="grid-column:1/-1">
           <span class="spacer"></span>
           <button class="btn-text" onClick=${() => setDraft(null)}>Cancel</button>

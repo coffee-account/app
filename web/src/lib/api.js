@@ -155,10 +155,16 @@ export const setDutyTarget = (person, target) => q(sb.rpc("set_duty_target", { p
 export const setDutyPool = (person, in_pool) => q(sb.rpc("set_duty_pool", { person, in_pool }));
 export const clearDutyFree = (week_start) => q(sb.from("duty_free_weeks").delete().eq("week_start", week_start));
 
-export async function assignDuty(week_start, person_id, note) {
-  const [row] = await q(sb.from("duty_assignments").insert({ week_start, person_id, note: note || null }).select());
-  const res = await sb.functions.invoke("notify", { body: { type: "duty_assigned", assignment_ids: [row.id] } });
-  return { row, mailError: res.error ? await errorMessage(res.error) : res.data?.results?.[0]?.error };
+/** Assigns several people to a week at once, then e-mails them together, so each e-mail names the others. */
+export async function assignDuty(week_start, person_ids, note) {
+  const rows = await q(sb.from("duty_assignments").insert(person_ids.map((person_id) => ({ week_start, person_id, note: note || null }))).select());
+  const res = await sb.functions.invoke("notify", { body: { type: "duty_assigned", assignment_ids: rows.map((r) => r.id) } });
+  if (res.error) {
+    const error = await errorMessage(res.error);
+    return { rows, mailErrors: rows.map((r) => ({ person_id: r.person_id, error })) };
+  }
+  const failed = (res.data?.results || []).filter((x) => x.error);
+  return { rows, mailErrors: failed.map((x) => ({ person_id: rows.find((r) => r.id === x.id)?.person_id, error: x.error })) };
 }
 export async function unassignDuty(a, notifyPerson) {
   await q(sb.from("duty_assignments").delete().eq("id", a.id));

@@ -120,6 +120,7 @@ function AssignModal({ week, data, settings, onClose, reload }) {
   const [showAll, setShowAll] = useState(false);
   const [note, setNote] = useState("");
   const [search, setSearch] = useState("");
+  const [picked, setPicked] = useState(new Set()); // people ticked for this week, assigned together
   const [busy, run] = useBusy();
   const assigned = new Set(data.duties.filter((d) => d.week_start === week).map((d) => d.person_id));
   const stats = useMemo(() => dutyStats(data.people, data.duties, dutyRound(settings)), [data, settings]);
@@ -139,15 +140,21 @@ function AssignModal({ week, data, settings, onClose, reload }) {
     || stats.get(b.id).owed - stats.get(a.id).owed
     || (lastDuty.get(a.id) || "").localeCompare(lastDuty.get(b.id) || ""));
 
-  const assign = (p) => run(async () => {
-    const { mailError } = await api.assignDuty(week, p.id, note);
-    if (mailError) toast(`${personName(p)} assigned, but the e-mail failed: ${mailError}`, "error");
-    else toast(`${personName(p)} assigned and notified`);
+  const toggle = (p) => setPicked((s) => { const n = new Set(s); n.has(p.id) ? n.delete(p.id) : n.add(p.id); return n; });
+  const nameOf = (id) => personName(data.people.find((p) => p.id === id));
+  const assign = () => run(async () => {
+    const ids = [...picked];
+    const { mailErrors } = await api.assignDuty(week, ids, note);
+    if (mailErrors.length) toast(`Assigned, but the e-mail to ${mailErrors.map((m) => nameOf(m.person_id)).join(", ")} failed: ${mailErrors[0].error}`, "error");
+    else toast(`${ids.map(nameOf).join(", ")} assigned and e-mailed`);
+    setPicked(new Set());
     reload();
   });
+  const total = assigned.size + picked.size;
 
   return html`<${Modal} title=${`Assign · ${weekLabel(week)}`} onClose=${onClose} wide>
-    <p class="lede" style="margin:6px 0 14px">${assigned.size} assigned${target ? ` of ${target}` : ""}. Sorted by availability, then by duties owed this round, then by who had duty longest ago.</p>
+    <p class="lede" style="margin:6px 0 14px">${assigned.size} assigned${target ? ` of ${target}` : ""}. Tick everyone for this week, then assign them together: each e-mail names the others on duty.
+      Sorted by availability, then by duties owed this round, then by who had duty longest ago.</p>
     <${CupLegend} />
     <div class="toolbar">
       <input data-search placeholder="Search name" value=${search} onInput=${(e) => setSearch(e.target.value)} />
@@ -169,10 +176,16 @@ function AssignModal({ week, data, settings, onClose, reload }) {
           <td>${lastDuty.get(p.id) ? `Week ${isoWeek(lastDuty.get(p.id))}, ${lastDuty.get(p.id).slice(0, 4)}` : "—"}</td>
           <td class="num">${assigned.has(p.id)
             ? html`<span class="badge ok">assigned</span>`
-            : html`<button class="btn small" disabled=${busy} onClick=${() => assign(p)}>Assign</button>`}</td>
+            : html`<input type="checkbox" aria-label=${`Pick ${personName(p)}`} checked=${picked.has(p.id)} disabled=${busy} onChange=${() => toggle(p)} />`}</td>
         </tr>`;
       })}</tbody>
     </table></div>
+    <div class="row" style="margin-top:14px">
+      <span class="small muted">${picked.size ? `Picked: ${[...picked].map(nameOf).join(", ")}` : "Nobody picked yet."}</span>
+      <span class="spacer"></span>
+      ${target > 0 && total > target && html`<span class="badge warn">${total} of ${target} per week</span>`}
+      <button class="btn primary" disabled=${busy || !picked.size} onClick=${assign}>${picked.size > 1 ? `Assign ${picked.size} people and e-mail them` : "Assign and e-mail"}</button>
+    </div>
   <//>`;
 }
 

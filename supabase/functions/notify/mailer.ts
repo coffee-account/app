@@ -89,7 +89,7 @@ ${body}
 
 // ── Editable e-mail texts (table email_templates) ──
 // The same Markdown as the Info page (web/src/lib/markdown.js), so the editor's preview matches:
-// "## " / "### " headings, "- " and "1. " lists, blank-line paragraphs, **bold**, *italic*,
+// "## " / "### " headings, "- " and "1. " lists, blank-line paragraphs, single line breaks, **bold**, *italic*,
 // [text](https://… or mailto:…), bare URLs and e-mail addresses. Links to anything else stay plain text.
 // {name} is replaced by vars[name], escaped; a line whose placeholders are all empty is left out
 // ({app_url} doesn't count); a placeholder alone on a line may be a ready-made HTML block (blocks[name]).
@@ -121,7 +121,7 @@ export function renderTemplate(
   const out: string[] = [];
   let para: string[] = [];
   let list: { tag: string; items: string[] } | null = null;
-  const flushPara = () => { if (para.length) { out.push(`<p ${P}>${inline(para.join(" "))}</p>`); para = []; } };
+  const flushPara = () => { if (para.length) { out.push(`<p ${P}>${para.map(inline).join("<br>")}</p>`); para = []; } };
   const flushList = () => {
     if (list) { out.push(`<${list.tag} ${P}>${list.items.map((i) => `<li>${inline(i)}</li>`).join("")}</${list.tag}>`); list = null; }
   };

@@ -14,13 +14,13 @@ function inline(text) {
   return s;
 }
 
-/** Returns HTML for the given Markdown text; `vars` replaces {placeholders}. */
-export function markdown(src, vars = {}) {
+/** Returns HTML for the given Markdown text; `vars` replaces {placeholders}. `breaks`: a single line break stays one (as in e-mails). */
+export function markdown(src, vars = {}, { breaks = false } = {}) {
   const text = String(src || "").replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
   const out = [];
   let list = null;
   let para = [];
-  const flushPara = () => { if (para.length) { out.push(`<p>${inline(para.join(" "))}</p>`); para = []; } };
+  const flushPara = () => { if (para.length) { out.push(`<p>${breaks ? para.map(inline).join("<br>") : inline(para.join(" "))}</p>`); para = []; } };
   const flushList = () => { if (list) { out.push(`<${list.tag}>${list.items.map((i) => `<li>${inline(i)}</li>`).join("")}</${list.tag}>`); list = null; } };
   for (const raw of text.split("\n")) {
     const line = raw.trimEnd();

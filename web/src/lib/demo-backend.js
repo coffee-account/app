@@ -124,6 +124,7 @@ class Store {
     // Demo data saved before newer features existed.
     for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts", "duty_free_weeks", "counted_groups"]) this.db[t] ??= [];
     this.db.email_templates ??= emailTemplates();
+    for (const t of this.db.email_templates) t.body = t.body.replace("You share it with {mates}.", "On duty with you: {others_on_duty}.").replaceAll("{mates}", "{others_on_duty}");
     for (const p of this.db.people) if (p.active_duty === undefined) Object.assign(p, { active_duty: p.active_coffee || p.active_drinks, duty_carryover: 0, duty_rounds_before: 0 });
     this.save();
   }

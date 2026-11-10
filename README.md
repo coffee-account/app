@@ -57,7 +57,7 @@ Then open <http://localhost:8000>. Run it from the project folder. It serves `we
 ### 1. Supabase project
 
 1. Create a free account at <https://supabase.com>, then a new project. Choose region **Central EU (Frankfurt)** for GDPR.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261111000000_emails_and_duty_pool.sql`: editable e-mail texts, duty managers manage the duty pool, and the first-steps tour). Each script only needs to run once per project.
+2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261112000000_others_on_duty.sql`: the {others_on_duty} placeholder in duty e-mails). Each script only needs to run once per project.
 3. Under **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 
 ### 2. Email sending

@@ -280,7 +280,7 @@ async function dutyAssigned(caller: Caller, body: any, s: Record<string, any>) {
       continue;
     }
     const mail = await compose("duty_assigned",
-      { first_name: p.name.split(" ")[0], week: weekLabel(a.week_start), mates: names.join(", "), note: a.note ?? "" }, {}, s);
+      { first_name: p.name.split(" ")[0], week: weekLabel(a.week_start), others_on_duty: names.join(", "), mates: names.join(", "), note: a.note ?? "" }, {}, s);
     try {
       await sendMail({ to: [p.email], ...mail });
       await db.from("duty_assignments").update({ notified_at: new Date().toISOString(), notify_error: null }).eq("id", a.id);
@@ -371,7 +371,7 @@ async function weekly(caller: Caller, s: Record<string, any>) {
       if (!p?.email) continue;
       try {
         await sendMail({ to: [p.email], ...await compose("duty_reminder",
-          { first_name: p.name.split(" ")[0], week: weekLabel(week), mates: names.filter((n) => n !== p.name).join(", ") }, {}, s) });
+          { first_name: p.name.split(" ")[0], week: weekLabel(week), others_on_duty: names.filter((n) => n !== p.name).join(", "), mates: names.filter((n) => n !== p.name).join(", ") }, {}, s) });
         summary.duty_reminders++;
       } catch (e) {
         summary.errors.push(`${p.email}: ${errMsg(e)}`);
