@@ -1,7 +1,7 @@
 import { html, useState, useEffect, useLoad, Loading, toast, useBusy } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
-import { availabilityRules, availabilityRequired } from "../lib/accounting.js";
+import { availabilityRules, availabilityRequired, missingAvailability } from "../lib/accounting.js";
 import { weeksFrom, weekLabel } from "../lib/dates.js";
 import { StatusCup, FillLevel } from "../lib/drawings.js";
 
@@ -14,7 +14,7 @@ export const STATUS = [
 export function AvailabilityPage() {
   const app = useApp();
   const { person, settings } = app;
-  const { weeksAhead } = availabilityRules(settings);
+  const { weeksAhead, minWeeks } = availabilityRules(settings);
   const [extra, setExtra] = useState(0);
   const weeks = weeksFrom(weeksAhead + extra);
   const state = useLoad(async () => {
@@ -31,7 +31,9 @@ export function AvailabilityPage() {
 
   const required = availabilityRequired(settings, person);
   const mandatoryWeeks = new Set(weeksFrom(weeksAhead).filter((w) => !free.has(w)));
-  const missing = weeks.filter((w) => mandatoryWeeks.has(w) && !draft[w]?.status);
+  const answered = mandatoryWeeks.size - weeks.filter((w) => mandatoryWeeks.has(w) && !draft[w]?.status).length;
+  // Only weeks that are due count as missing: none while the next few weeks are answered.
+  const due = new Set(required ? missingAvailability(settings, Object.keys(draft).filter((w) => draft[w]?.status).map((w) => ({ week_start: w })), [...free.keys()]) : []);
 
   const setWeek = (w, patch) => setDraft((d) => ({ ...d, [w]: { note: "", ...d[w], ...patch } }));
   const setAll = (status) => setDraft((d) => ({ ...d, ...Object.fromEntries(weeks.filter((w) => !free.has(w)).map((w) => [w, { note: "", ...d[w], status: d[w]?.status || status }])) }));
@@ -42,17 +44,20 @@ export function AvailabilityPage() {
     }));
     await api.saveAvailability(rows);
     toast("Availability saved");
+    const unlocks = app.availabilityMissing.length > 0 && due.size === 0; // was locked, and nothing is due any more
     await app.refresh();
+    // Saving the weeks that were due opens the rest of the app: continue on My account.
+    if (unlocks && location.hash.replace(/^#\/?/, "") === "availability") location.hash = "#/";
   });
 
   return html`
     <div class="page-head"><div><h1>My availability</h1>
       <p>${required
-        ? `Keep the next ${weeksAhead} weeks answered so kitchen duty can be planned.`
+        ? `Answer the next ${weeksAhead} weeks so kitchen duty can be planned. You'll be asked again once fewer than ${minWeeks} weeks are answered.`
         : "Optional for you, but it helps the duty managers plan."}</p></div></div>
     <${Loading} state=${state}>${() => html`
       <div class="toolbar">
-        <${FillLevel} value=${mandatoryWeeks.size - missing.length} max=${mandatoryWeeks.size} label="Weeks answered" />
+        <${FillLevel} value=${answered} max=${mandatoryWeeks.size} label="Weeks answered" />
         <span class="spacer"></span>
         <span class="small muted">Fill empty weeks with</span>
         <div class="seg" role="group" aria-label="Fill all empty weeks">
@@ -66,9 +71,9 @@ export function AvailabilityPage() {
               <span class="muted">No kitchen duty this week${free.get(w).note ? ` (${free.get(w).note})` : ""}</span></div>`;
           }
           const v = draft[w] || {};
-          return html`<div class="week-row ${required && mandatoryWeeks.has(w) && !v.status ? "missing" : ""}">
+          return html`<div class="week-row ${due.has(w) ? "missing" : ""}">
             <div>
-              <div><b>${weekLabel(w)}</b>${required && mandatoryWeeks.has(w) && !v.status && html` <span class="missing-word">not answered</span>`}</div>
+              <div><b>${weekLabel(w)}</b>${due.has(w) && html` <span class="missing-word">not answered</span>`}</div>
               <input placeholder="Note (optional), e.g. only Mon–Wed" value=${v.note || ""} style="margin-top:6px"
                 onInput=${(e) => setWeek(w, { note: e.target.value })} />
             </div>
@@ -82,7 +87,7 @@ export function AvailabilityPage() {
       <div class="row" style="margin-top:14px">
         <button class="btn-text" onClick=${() => setExtra(extra + 4)}>Show 4 more weeks</button>
         <span class="spacer"></span>
-        ${required && missing.length > 0 && html`<span class="badge warn">${missing.length} week${missing.length > 1 ? "s" : ""} not answered</span>`}
+        ${due.size > 0 && html`<span class="badge warn">${due.size} week${due.size > 1 ? "s" : ""} not answered</span>`}
         <button class="btn primary" disabled=${busy} onClick=${save}>Save availability</button>
       </div>`}<//>`;
 }

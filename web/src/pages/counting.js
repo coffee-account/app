@@ -24,14 +24,17 @@ export function CountingPage() {
       onClose=${() => { setEditing(null); state.reload(); }} onReload=${state.reload} />`}<//>`;
   }
   return html`
-    <div class="page-head"><div><h1>Counting</h1><p>Type in the marks from a collected paper list, one session per list and date.</p></div>
-      <div class="row">
+    <div class="page-head"><div><h1>Counting</h1><p>${app.isAdmin ? "Type in the marks from a collected paper list, one session per list and date." : "Open the count an admin started and type in the marks for your group."}</p></div>
+      ${app.isAdmin && html`<div class="row">
         <button class="btn" onClick=${() => setEditing({ kind: "drinks", session_date: isoDate() })}>New drinks count</button>
         <button class="btn primary" onClick=${() => setEditing({ kind: "coffee", session_date: isoDate() })}>New coffee count</button>
-      </div></div>
+      </div>`}</div>
     <${Loading} state=${state}>${(data) => {
       const sessions = [...data.sessions].filter((s) => !isPending(`session:${s.id}`)).sort((a, b) => b.session_date.localeCompare(a.session_date));
       if (!sessions.length) {
+        if (!app.isAdmin) {
+          return html`<${EmptyState} drawing=${html`<${TallySheet} />`}>No counts yet. Once an admin opens a count, it appears here.<//>`;
+        }
         return html`<${EmptyState} drawing=${html`<${TallySheet} />`}
           action=${html`<button class="btn primary" onClick=${() => setEditing({ kind: "coffee", session_date: isoDate() })}>New coffee count</button>`}>
           No counts yet. After collecting a paper list, enter its marks here.<//>`;

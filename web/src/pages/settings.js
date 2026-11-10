@@ -25,7 +25,7 @@ function GeneralSettings({ settings, onSaved }) {
     app_name: settings.app_name ?? "Coffee & Drinks",
     signup_domains: (settings.signup_domains || []).join(", "),
     reimbursement: { to: "", cc_submitter: true, ...settings.reimbursement },
-    availability: { weeks_ahead: 6, required_for: "active", reminders: true, ...settings.availability },
+    availability: { weeks_ahead: 6, min_weeks: 3, required_for: "active", reminders: true, ...settings.availability },
     duty: { people_per_week: 2, info: "", reminders: true, ...settings.duty },
     balance: { low_threshold: -10, starting_label: "Starting balance", ...settings.balance },
     payment_info: settings.payment_info ?? "",
@@ -43,7 +43,7 @@ function GeneralSettings({ settings, onSaved }) {
       const values = {
         ...s,
         signup_domains: s.signup_domains.split(/[,\s]+/).map((d) => d.trim().replace(/^@/, "").toLowerCase()).filter(Boolean),
-        availability: { ...s.availability, weeks_ahead: Number(s.availability.weeks_ahead) || 0 },
+        availability: { ...s.availability, weeks_ahead: Number(s.availability.weeks_ahead) || 0, min_weeks: Number(s.availability.min_weeks) || 3 },
         duty: { ...s.duty, people_per_week: Number(s.duty.people_per_week) || 0 },
         balance: { ...s.balance, low_threshold: Number(String(s.balance.low_threshold).replace(",", ".")) || 0 },
       };
@@ -70,7 +70,9 @@ function GeneralSettings({ settings, onSaved }) {
         <h2>Kitchen duty</h2>
         <div class="grid">
           <div class="form-grid">
-            <${Field} label="Weeks people must fill in ahead"><input type="number" min="1" max="26" value=${s.availability.weeks_ahead} onInput=${(e) => sub("availability", { weeks_ahead: e.target.value })} /><//>
+            <${Field} label="Weeks people fill in ahead"><input type="number" min="1" max="26" value=${s.availability.weeks_ahead} onInput=${(e) => sub("availability", { weeks_ahead: e.target.value })} /><//>
+            <${Field} label="Minimum weeks answered" hint="Only once fewer weeks are answered are people asked again, then up to the weeks ahead.">
+              <input type="number" min="1" max="26" value=${s.availability.min_weeks} onInput=${(e) => sub("availability", { min_weeks: e.target.value })} /><//>
             <${Field} label="People per week (target)"><input type="number" min="0" max="10" value=${s.duty.people_per_week} onInput=${(e) => sub("duty", { people_per_week: e.target.value })} /><//>
           </div>
           <${Field} label="Availability is mandatory for">
@@ -79,10 +81,10 @@ function GeneralSettings({ settings, onSaved }) {
               <option value="all">Every connected account</option>
             </select><//>
           <label class="check"><input type="checkbox" checked=${s.availability.reminders} onChange=${(e) => sub("availability", { reminders: e.target.checked })} />
-            Weekly reminder e-mail to people with missing weeks</label>
+            Weekly reminder e-mail to people whose answered weeks run low</label>
           <label class="check"><input type="checkbox" checked=${s.duty.reminders} onChange=${(e) => sub("duty", { reminders: e.target.checked })} />
             Remind people on duty at the start of their week</label>
-          <${Field} label="Duty instructions (included in duty e-mails)"><textarea value=${s.duty.info} onInput=${(e) => sub("duty", { info: e.target.value })}></textarea><//>
+          <p class="small muted" style="margin:0">The texts of the duty e-mails are under <a href="#/emails">E-mails</a>.</p>
         </div>
       </div>
     </div>

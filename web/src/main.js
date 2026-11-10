@@ -19,28 +19,31 @@ import { AccountsPage } from "./pages/accounts.js";
 import { SettingsPage } from "./pages/settings.js";
 import { ImportPage } from "./pages/import.js";
 import { InfoPage } from "./pages/info.js";
+import { EmailsPage } from "./pages/emails.js";
 import { RefundsPage } from "./pages/refunds.js";
 import { IssuesPage } from "./pages/issues.js";
 import { PaypalPage } from "./pages/paypal.js";
-import { GuestAvailabilityPage, GUEST_KEY } from "./pages/guest.js";
+import { Tour, tourParts, unseenParts } from "./lib/guide.js";
 
+// Grouped by task; the first group has no heading. Order within a group follows the usual workflow.
 const ROUTES = [
-  { path: "info", title: "Updates & guide", page: InfoPage, section: "INFO", show: () => true },
-  { path: "", title: "My account", page: HomePage, section: "ME", show: () => true },
-  { path: "availability", title: "My availability", page: AvailabilityPage, section: "ME", show: (a) => !!a.person },
-  { path: "duties", title: "Kitchen duty", page: DutiesPage, section: "ME", show: () => true },
-  { path: "invoices", title: "Invoices", page: InvoicesPage, section: "ME", show: (a) => a.canUpload },
-  { path: "issues", title: "Report an issue", page: IssuesPage, section: "ME", show: () => true },
-  { path: "refunds", title: "Refunds", page: RefundsPage, section: "ME", show: (a) => !!a.person || a.isAdmin },
-  { path: "balances", title: "Balances", page: BalancesPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "info", title: "Updates & guide", page: InfoPage, section: "", show: () => true },
+  { path: "", title: "My account", page: HomePage, section: "", show: () => true },
+  { path: "availability", title: "My availability", page: AvailabilityPage, section: "KITCHEN DUTY", show: (a) => !!a.person },
+  { path: "duties", title: "Duty schedule", page: DutiesPage, section: "KITCHEN DUTY", show: () => true },
+  { path: "issues", title: "Report an issue", page: IssuesPage, section: "REQUESTS", show: () => true },
+  { path: "invoices", title: "Invoices", page: InvoicesPage, section: "REQUESTS", show: (a) => a.canUpload },
+  { path: "refunds", title: "Refunds", page: RefundsPage, section: "REQUESTS", show: (a) => !!a.person || a.isAdmin },
+  { path: "lists", title: "Print lists", page: ListsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
   { path: "counting", title: "Counting", page: CountingPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "payments", title: "Payments", page: PaymentsPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "paypal", title: "PayPal import", page: PaypalPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
-  { path: "lists", title: "Print lists", page: ListsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
-  { path: "people", title: "People", page: PeoplePage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
-  { path: "accounts", title: (a) => (a.isAdmin ? "Accounts & roles" : "Accounts"), page: AccountsPage, section: "ADMIN", show: (a) => a.isAdmin || a.isGroupAdmin },
-  { path: "settings", title: "Settings", page: SettingsPage, section: "ADMIN", show: (a) => a.isAdmin },
-  { path: "import", title: "Import spreadsheets", page: ImportPage, section: "ADMIN", show: (a) => a.isAdmin },
+  { path: "balances", title: "Balances", page: BalancesPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "people", title: "People", page: PeoplePage, section: "MANAGE", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "accounts", title: (a) => (a.isAdmin ? "Accounts & roles" : "Accounts"), page: AccountsPage, section: "MANAGE", show: (a) => a.isAdmin || a.isGroupAdmin },
+  { path: "emails", title: "E-mails", page: EmailsPage, section: "MANAGE", show: (a) => a.isAdmin || a.canManageDuties || a.canResolve },
+  { path: "settings", title: "Settings", page: SettingsPage, section: "MANAGE", show: (a) => a.isAdmin },
+  { path: "import", title: "Import spreadsheets", page: ImportPage, section: "MANAGE", show: (a) => a.isAdmin },
 ];
 
 // A route's title may depend on who is signed in.
@@ -64,12 +67,7 @@ function useRoute() {
 // ── Auth screens ──
 function AuthScreen({ settings, groups, initialMode = "signin" }) {
   const [mode, setMode] = useState(initialMode);
-  // Coming from the guest availability form: their name and group are already known.
-  const [form, setForm] = useState(() => {
-    let guest = {};
-    try { guest = JSON.parse(sessionStorage.getItem(GUEST_KEY)) || {}; } catch { /* storage unavailable */ }
-    return { email: "", password: "", first_name: guest.first || "", last_name: guest.last || "", group: guest.group || "" };
-  });
+  const [form, setForm] = useState({ email: "", password: "", first_name: "", last_name: "", group: "" });
   const [done, setDone] = useState(null);
   const [busy, run] = useBusy();
   const set = (k) => (e) => { const v = e.target.value; setForm((f) => ({ ...f, [k]: v })); };
@@ -139,7 +137,6 @@ function AuthScreen({ settings, groups, initialMode = "signin" }) {
       ${mode === "register" && html`<p class="small muted">If you are already on the coffee or drinks list, use the same name:
         an admin will then connect your account to your existing balance.</p>`}
     </form>`}
-    <p class="small muted" style="margin:16px 0 0"><a href="#/guest">Fill in your kitchen-duty availability without signing in →</a></p>
   </div></div>`;
 }
 
@@ -160,14 +157,32 @@ function SetPasswordScreen({ onDone }) {
 // ── Signed-in shell ──
 function Shell({ app }) {
   const at = useRoute();
-  const path = at === "guest" ? "availability" : at; // the QR code link, opened while signed in
+  const path = at;
   const [menuOpen, setMenuOpen] = useState(false);
   const [freshUpdates, setFreshUpdates] = useState(null); // new updates for people who skip the Info page
+  const [tour, setTour] = useState(null); // tour parts to show, or null
+  // Once per sign-in, a pop-up explains why most of the menu is locked.
+  const [gatePopup, setGatePopup] = useState(() => {
+    const key = `pc:gate-shown:${app.user.id}`;
+    try { if (sessionStorage.getItem(key)) return false; sessionStorage.setItem(key, "1"); } catch { /* storage unavailable */ }
+    return true;
+  });
+  const [tourPath, setTourPath] = useState(null); // menu entry the tour points at
+  useEffect(() => {
+    const open = () => setTour(tourParts(app));
+    window.addEventListener("pc:open-tour", open);
+    return () => window.removeEventListener("pc:open-tour", open);
+  }, [app]);
   const visible = ROUTES.filter((r) => r.show(app));
   const gated = app.availabilityMissing.length > 0;
+  const locked = (p) => gated && !OPEN_WHEN_GATED.has(p); // menu entries that wait for availability
   let route = visible.find((r) => r.path === path) || visible.find((r) => r.path === "") || visible[0];
   if (gated && !OPEN_WHEN_GATED.has(route.path)) route = ROUTES.find((r) => r.path === "availability");
   useEffect(() => setMenuOpen(false), [path]);
+  // The tour opens by itself for parts not seen yet: the whole tour for new people, only the new part
+  // for someone who got a new role. Only once the menu is unlocked, so every step can be opened.
+  const unseen = unseenParts(app).join();
+  useEffect(() => { if (!gated && unseen) setTour((t) => t || unseenParts(app)); }, [gated, unseen]);
   // Once per sign-in: open the Info page, or, for people who switched that off,
   // show updates posted since their last visit in a pop-up.
   useEffect(() => {
@@ -217,9 +232,9 @@ function Shell({ app }) {
       <div class="brand">${appName}</div>
       ${api.isDemo && html`<div style="padding:0 10px 6px"><span class="badge warn">Demo mode</span></div>`}
       <nav class="nav" aria-label="Main">
-        ${sections.map((s) => html`<div class="nav-section">${s}</div>
+        ${sections.map((s) => html`${s && html`<div class="nav-section">${s}</div>`}
           ${visible.filter((r) => r.section === s).map((r) => html`
-            <a href="#/${r.path}" class="${r === route ? "active" : ""} ${gated && !OPEN_WHEN_GATED.has(r.path) ? "locked" : ""}"
+            <a href="#/${r.path}" class="${r === route ? "active" : ""} ${gated && !OPEN_WHEN_GATED.has(r.path) ? "locked" : ""} ${tour && tourPath === r.path && !locked(r.path) ? "tour-spot" : ""}"
               aria-current=${r === route ? "page" : undefined}>
               ${titleOf(r, app)}${r.path === "availability" && gated && html`<span class="task-dot" title="Weeks missing"></span>`}</a>`)}`)}
       </nav>
@@ -242,12 +257,36 @@ function Shell({ app }) {
     </aside>
     <div>
       <main class="main">
-        ${gated && html`<div class="notice warn">${`You haven't answered ${app.availabilityMissing.length} week${app.availabilityMissing.length > 1 ? "s" : ""} of kitchen-duty availability yet. The rest of the app opens once you have.`}</div>`}
         <${Page} key=${route.path} />
-        ${freshUpdates && html`<${NewUpdatesDialog} app=${app} updates=${freshUpdates} onClose=${() => setFreshUpdates(null)} />`}
+        ${gatePopup && gated ? html`<${AvailabilityDialog} app=${app} onClose=${() => setGatePopup(false)} />`
+          : freshUpdates && html`<${NewUpdatesDialog} app=${app} updates=${freshUpdates} onClose=${() => setFreshUpdates(null)} />`}
+        ${tour && html`<${Tour} key=${tour.join()} app=${app} parts=${tour} locked=${locked} onStep=${setTourPath} onClose=${() => setTour(null)} />`}
       </main>
     </div>
   </div>`;
+}
+
+/** Why most of the menu is locked: availability is due. New people (who haven't had the tour) get a welcome instead. */
+function AvailabilityDialog({ app, onClose }) {
+  const n = app.availabilityMissing.length;
+  const { weeksAhead } = availabilityRules(app.settings);
+  const isNew = unseenParts(app).includes("member");
+  const go = () => { location.hash = "#/availability"; onClose(); };
+  if (isNew) {
+    return html`<${Modal} title=${`Welcome to ${app.settings.app_name || "Coffee & Drinks"}`} onClose=${onClose}>
+      <p class="lede" style="margin:4px 0 8px">${`One thing first: kitchen duty is shared by everyone, so please tell us which of the next ${weeksAhead} weeks you could take a turn. It takes about a minute.`}</p>
+      <p class="lede" style="margin:0">Once that's done, the rest of the app opens and a short tour shows you around.</p>
+      <div class="row end" style="margin-top:20px">
+        <button class="btn primary" onClick=${go}>Fill in my availability</button>
+      </div>
+    <//>`;
+  }
+  return html`<${Modal} title=${n >= weeksAhead ? "Please fill in your availability" : "Your availability is running out"} onClose=${onClose}>
+    <p class="lede" style="margin:4px 0 0">${`Kitchen duty is planned from everyone's availability. Please answer the ${n} open week${n > 1 ? "s" : ""} under My availability. The rest of the app opens once you have.`}</p>
+    <div class="row end" style="margin-top:20px">
+      <button class="btn primary" onClick=${go}>Fill in availability</button>
+    </div>
+  <//>`;
 }
 
 /** New updates since the last visit, for people who don't want the Info page at sign-in. */
@@ -323,7 +362,7 @@ function App() {
       if (event === "PASSWORD_RECOVERY") setState({ phase: "recovery" });
       else if (event === "SIGNED_OUT") {
         loadedUid = null;
-        try { Object.keys(sessionStorage).filter((k) => k.startsWith("pc:info-shown:")).forEach((k) => sessionStorage.removeItem(k)); } catch { /* storage unavailable */ }
+        try { Object.keys(sessionStorage).filter((k) => k.startsWith("pc:info-shown:") || k.startsWith("pc:gate-shown:")).forEach((k) => sessionStorage.removeItem(k)); } catch { /* storage unavailable */ }
         // The next sign-in starts from the beginning, not from the page the last person was on.
         if (location.hash) history.replaceState(null, "", location.pathname + location.search);
         loadApp(null);
@@ -345,9 +384,7 @@ function App() {
   const path = useRoute();
   let body;
   if (state.phase === "boot") body = html`<div class="boot">Loading…</div>`;
-  else if (state.phase === "signed-out" && path === "guest") {
-    body = html`<${GuestAvailabilityPage} groups=${publicData.groups} appName=${publicData.settings.app_name || "Coffee & Drinks"} />`;
-  } else if (state.phase === "signed-out") {
+  else if (state.phase === "signed-out") {
     body = html`<${AuthScreen} key=${path} ...${publicData} initialMode=${path === "register" ? "register" : "signin"} />`;
   }
   else if (state.phase === "recovery") {

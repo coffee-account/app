@@ -4,6 +4,9 @@
 // There is no access control here: the real rules live in the database.
 
 import { isoDate, addDays, mondayOf } from "./dates.js";
+import { EMAIL_TEMPLATES } from "./email-templates.js";
+
+const emailTemplates = () => EMAIL_TEMPLATES.map(({ key, subject, body }) => ({ key, subject, body }));
 
 const KEY = "coffee-demo-v1";
 const uuid = () => crypto.randomUUID();
@@ -12,7 +15,7 @@ const DEFAULT_SETTINGS = {
   app_name: "Coffee & Drinks",
   signup_domains: [],
   reimbursement: { to: "finance@example.org", cc_submitter: true },
-  availability: { weeks_ahead: 6, required_for: "active", reminders: true },
+  availability: { weeks_ahead: 6, min_weeks: 3, required_for: "active", reminders: true },
   duty: { people_per_week: 2, info: "Empty the dishwasher, wipe the counters, refill milk and coffee beans.", reminders: true, round: 3 },
   balance: { low_threshold: -10, starting_label: "Starting balance 19.1.2026" },
   payment_info: "Transfer to the PayPal account coffee@example.org and tell the accounting manager.",
@@ -86,6 +89,7 @@ function seed() {
     updates: [{ id: uuid(), title: "Welcome to the new coffee app", body: "The paper lists stay as they are. Please register and fill in your kitchen-duty availability.", audience: "all", pinned: true, created_at: new Date().toISOString() }],
     refund_requests: [],
     issues: [{ id: uuid(), category: "milk", title: "Oat milk is empty", description: "Only one carton of normal milk left.", reporter_name: "Bob Member", status: "open", created_at: new Date().toISOString() }],
+    email_templates: emailTemplates(),
     files: {}, session: null,
   };
 }
@@ -93,9 +97,9 @@ function seed() {
 const KEYS = {
   settings: ["key"], groups: ["name"], people: ["id"], profiles: ["id"], prices: ["kind", "valid_from"],
   count_sessions: ["id"], counts: ["session_id", "person_id"], payments: ["id"], list_templates: ["id"],
-  invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"], duty_free_weeks: ["week_start"], guest_availability: ["id"], counted_groups: ["session_id", "group_name"],
+  invoices: ["id"], availability: ["person_id", "week_start"], duty_assignments: ["id"], duty_free_weeks: ["week_start"], counted_groups: ["session_id", "group_name"],
   updates: ["id"], refund_requests: ["id"], issues: ["id"],
-  payer_aliases: ["id"], ignored_transactions: ["external_id"], payouts: ["id"],
+  payer_aliases: ["id"], ignored_transactions: ["external_id"], payouts: ["id"], email_templates: ["key"],
 };
 const DEFAULTS = {
   people: () => ({ id: uuid(), active_coffee: false, active_drinks: false, active_duty: false, duty_carryover: 0, duty_rounds_before: 0, starting_balance: 0, created_at: new Date().toISOString() }),
@@ -111,7 +115,6 @@ const DEFAULTS = {
   payer_aliases: () => ({ id: uuid(), created_at: new Date().toISOString() }),
   ignored_transactions: () => ({ created_at: new Date().toISOString() }),
   payouts: () => ({ id: uuid(), created_at: new Date().toISOString() }),
-  guest_availability: () => ({ id: uuid(), status: "pending", created_at: new Date().toISOString() }),
   counted_groups: () => ({ done_at: new Date().toISOString() }),
 };
 
@@ -119,7 +122,8 @@ class Store {
   constructor() {
     try { this.db = JSON.parse(localStorage.getItem(KEY)) || seed(); } catch { this.db = seed(); }
     // Demo data saved before newer features existed.
-    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts", "duty_free_weeks", "guest_availability", "counted_groups"]) this.db[t] ??= [];
+    for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts", "duty_free_weeks", "counted_groups"]) this.db[t] ??= [];
+    this.db.email_templates ??= emailTemplates();
     for (const p of this.db.people) if (p.active_duty === undefined) Object.assign(p, { active_duty: p.active_coffee || p.active_drinks, duty_carryover: 0, duty_rounds_before: 0 });
     this.save();
   }
@@ -323,28 +327,13 @@ export function createDemoClient(notify) {
         store.save();
         return { data: null, error: null };
       }
-      if (name === "guest_availability_info") {
-        const a = store.db.settings.find((s) => s.key === "availability")?.value || {};
-        return { data: { weeks_ahead: Number(a.weeks_ahead ?? 6), free_weeks: store.db.duty_free_weeks.map((f) => f.week_start) }, error: null };
-      }
-      if (name === "submit_guest_availability") {
-        const key = (s) => String(s || "").toLowerCase().replace(/[^\p{L}]/gu, "");
-        const [f, l, g] = [args.first_name.trim(), args.last_name.trim(), args.group_name?.trim() || null];
-        if (!f || !l) return { data: null, error: { message: "Please give your first and last name" } };
-        let hits = store.db.people.filter((p) => (key(p.first_name) === key(f) && key(p.last_name) === key(l)) || (key(p.first_name) === key(l) && key(p.last_name) === key(f)));
-        if (hits.length > 1) hits = hits.filter((p) => (p.group_name || null) === g);
-        const pid = hits.length === 1 ? hits[0].id : null;
-        let saved = 0;
-        if (pid) {
-          for (const a of args.answers) {
-            store.db.availability = store.db.availability.filter((x) => !(x.person_id === pid && x.week_start === a.week));
-            store.db.availability.push({ person_id: pid, week_start: a.week, status: a.status, note: a.note || null, updated_at: new Date().toISOString() });
-            saved++;
-          }
-        }
-        store.db.guest_availability.push({ ...DEFAULTS.guest_availability(), first_name: f, last_name: l, group_name: g, answers: args.answers, person_id: pid, status: pid ? "applied" : "pending" });
+      if (name === "set_duty_pool") {
+        const round = Number(store.db.settings.find((s) => s.key === "duty")?.value?.round ?? 0);
+        const p = store.db.people.find((x) => x.id === args.person) || {};
+        const fresh = args.in_pool && !p.active_duty && !Number(p.duty_rounds_before) && !Number(p.duty_carryover);
+        Object.assign(p, { active_duty: !!args.in_pool }, fresh ? { duty_rounds_before: round } : {});
         store.save();
-        return { data: { matched: !!pid, saved, has_account: !!pid && store.db.profiles.some((x) => x.person_id === pid) }, error: null };
+        return { data: null, error: null };
       }
       if (name === "set_duty_target") {
         const round = Number(store.db.settings.find((s) => s.key === "duty")?.value?.round ?? 0);

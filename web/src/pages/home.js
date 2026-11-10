@@ -4,6 +4,7 @@ import * as api from "../lib/api.js";
 import { computeLedger } from "../lib/accounting.js";
 import { fmtDate, isoDate, mondayOf, addDays, weekLabel } from "../lib/dates.js";
 import { Figures, DictEntry, EmptyState, LayeredCup, WeekCalendar } from "../lib/drawings.js";
+import { GettingStarted } from "../lib/guide.js";
 
 const hello = () => {
   const h = new Date().getHours();
@@ -28,6 +29,7 @@ export function HomePage() {
           ? "Your account is waiting for an admin to connect it to your entry on the coffee list."
           : "Your account isn't connected to an entry on the coffee list yet. An admin will do this for you."} Until then
         there is no balance to show.</p></div></div>
+      <${GettingStarted} app=${app} ledger=${null} />
       <${EmptyState} drawing=${html`<${LayeredCup} size=${130} />`}>Your balance and history will appear here once your account is connected.<//>`;
   }
 
@@ -39,6 +41,7 @@ export function HomePage() {
       <${DictEntry} word="mug·shot" pos="n.">The face you make when the pot is empty and it's your kitchen week.<//>
     </div>
     <${Loading} state=${state}>${({ ledger, duties }) => html`
+      <${GettingStarted} app=${app} ledger=${ledger} />
       ${ledger.balance < low && html`<div class="notice bad">Your balance is below ${fmtEUR(low)}. Please top it up${settings.payment_info ? " (see below)" : ""}.</div>`}
       <${Figures} items=${[
         { label: "Balance", value: fmtEUR(ledger.balance), tone: tone(ledger.balance), sub: "after all counts and payments" },

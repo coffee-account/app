@@ -151,24 +151,8 @@ export const listAllDuties = () => q(sb.from("duty_assignments").select("*"));
 
 export const listDutyFreeWeeks = () => q(sb.from("duty_free_weeks").select("*").order("week_start"));
 export const setDutyFree = (week_start, note) => q(sb.from("duty_free_weeks").upsert({ week_start, note: note || null }, { onConflict: "week_start" }));
-// Guest availability: the page behind the QR code, usable without an account.
-export const guestLink = () => `${appUrl()}#/guest`;
-export const guestAvailabilityInfo = () => q(sb.rpc("guest_availability_info"));
-export const submitGuestAvailability = (first_name, last_name, group_name, answers) =>
-  q(sb.rpc("submit_guest_availability", { first_name, last_name, group_name, answers }));
-export const listGuestAvailability = () => q(sb.from("guest_availability").select("*").eq("status", "pending").order("created_at"));
-export const dismissGuestAvailability = (id) => q(sb.from("guest_availability").update({ status: "dismissed" }).eq("id", id));
-/** Gives a waiting guest's answers to a person. They replace older answers, but not ones changed after the form was sent. */
-export async function connectGuestAvailability(g, personId) {
-  const weeks = g.answers.map((a) => a.week);
-  const existing = weeks.length ? await q(sb.from("availability").select("week_start, updated_at").eq("person_id", personId).in("week_start", weeks)) : [];
-  const newer = new Set(existing.filter((x) => x.updated_at && x.updated_at > g.created_at).map((x) => x.week_start));
-  const rows = g.answers.filter((a) => !newer.has(a.week))
-    .map((a) => ({ person_id: personId, week_start: a.week, status: a.status, note: a.note || null, updated_at: new Date().toISOString() }));
-  if (rows.length) await q(sb.from("availability").upsert(rows, { onConflict: "person_id,week_start" }));
-  await q(sb.from("guest_availability").update({ status: "applied", person_id: personId }).eq("id", g.id));
-}
 export const setDutyTarget = (person, target) => q(sb.rpc("set_duty_target", { person, target }));
+export const setDutyPool = (person, in_pool) => q(sb.rpc("set_duty_pool", { person, in_pool }));
 export const clearDutyFree = (week_start) => q(sb.from("duty_free_weeks").delete().eq("week_start", week_start));
 
 export async function assignDuty(week_start, person_id, note) {
@@ -310,6 +294,10 @@ export const completeRefund = (id, paidOn, note) => q(sb.rpc("complete_refund", 
 export const rejectRefund = (id, note) => q(sb.from("refund_requests").update({ status: "rejected", admin_note: note || null, processed_at: new Date().toISOString() }).eq("id", id));
 
 // ── Issues ──
+// ── E-mail texts (only the ones the user may edit come back) ──
+export const listEmailTemplates = () => q(sb.from("email_templates").select("*"));
+export const saveEmailTemplate = (key, subject, body) => q(sb.from("email_templates").update({ subject, body }).eq("key", key));
+
 export const listIssues = () => q(sb.from("issues").select("*").order("created_at", { ascending: false }).limit(200));
 export async function reportIssue(uid, row) {
   const [it] = await q(sb.from("issues").insert({ ...row, reported_by: uid }).select());

@@ -2,10 +2,11 @@ import { html, useState, useEffect, useLoad, Loading, Field, toast, useBusy, fmt
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { markdown } from "../lib/markdown.js";
-import { DEFAULT_INFO, DEFAULT_ADMIN_INFO } from "../lib/info-defaults.js";
+import { DEFAULT_INFO, DEFAULT_ADMIN_INFO, DEFAULT_INVOICE_INFO } from "../lib/info-defaults.js";
 import { priceAt } from "../lib/accounting.js";
 import { isoDate, fmtDate } from "../lib/dates.js";
 import { DictEntry } from "../lib/drawings.js";
+import { openTour } from "../lib/guide.js";
 
 export function InfoPage() {
   const app = useApp();
@@ -20,7 +21,8 @@ export function InfoPage() {
     return { updates, settings, prices };
   });
   return html`
-    <div class="page-head"><div><h1>Info</h1><p>News first, then how everything works.</p></div></div>
+    <div class="page-head"><div><h1>Info</h1><p>News first, then how everything works.</p></div>
+      <div class="row"><button class="btn" onClick=${openTour}>Take the tour</button></div></div>
     <${StartupNotice} app=${app} />
     <${Loading} state=${state}>${({ updates, settings, prices }) => {
       const today = isoDate();
@@ -37,6 +39,8 @@ export function InfoPage() {
           vars=${vars} editable=${app.isAdmin} reload=${state.reload} />
         ${app.seesAdminMessages && html`<${InfoBlock} title="For admins" note="Only admins and group admins see this part." settingKey="info_admin"
           text=${settings.info_admin} fallback=${DEFAULT_ADMIN_INFO} vars=${vars} editable=${app.isAdmin} reload=${state.reload} />`}
+        ${app.canUpload && html`<${InfoBlock} title="Invoices" note="Only people who can upload invoices see this part." settingKey="info_invoices"
+          text=${settings.info_invoices} fallback=${DEFAULT_INVOICE_INFO} vars=${vars} editable=${app.isAdmin} reload=${state.reload} />`}
         <div style="margin-top:32px">
           <${DictEntry} word="de·cof·fi·cit" pos="n.">The gap between how many coffees were marked and how many were actually drunk.<//>
         </div>
@@ -104,7 +108,7 @@ function InfoBlock({ title, note, settingKey, text, fallback, vars, editable, re
   const current = text || fallback;
   const save = (value) => run(async () => {
     await api.saveSetting(settingKey, value);
-    toast(value ? "Info saved" : "Back to the suggested text");
+    toast("Info saved");
     setEditing(false);
     reload();
   });
@@ -118,8 +122,6 @@ function InfoBlock({ title, note, settingKey, text, fallback, vars, editable, re
           <textarea rows="22" value=${draft} onInput=${(e) => setDraft(e.target.value)}></textarea><//>
         <div class="prose preview" dangerouslySetInnerHTML=${{ __html: markdown(draft, vars) }}></div>
         <div class="row" style="grid-column:1/-1">
-          ${text && html`<${ConfirmAction} label="Use suggested text" question="Replace with the suggested text?" align="left"
-            actions=${[{ label: "Replace", danger: true, onClick: () => save("") }]} />`}
           <span class="spacer"></span>
           <button class="btn-text" onClick=${() => setEditing(false)}>Cancel</button>
           <button class="btn primary" disabled=${busy} onClick=${() => save(draft)}>Save</button>

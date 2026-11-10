@@ -1,69 +1,29 @@
-// Suggested starting text for the Info page. Admins can replace it on the page itself.
+// Starting text for the Info page. Admins can replace it on the page itself.
 // Placeholders: {coffee_price}, {drinks_price}, {low_threshold}, {weeks_ahead}, {app_url}
 
-export const DEFAULT_INFO = `## How the coffee corner works
-Everyone who drinks coffee or drinks from the kitchen is on a paper list next to the machine. Each time you take one, add a mark behind your name. Every few weeks the lists are collected, the marks are counted, and your balance here is updated.
+export const DEFAULT_INFO = `## Using this app
+- **My account**: your balance and every count and payment. Please top up when it gets close to **{low_threshold}**. It can take a few days for a payment to show up.
+- **My availability**: answer the next **{weeks_ahead} weeks** for kitchen duty. You'll be asked again once only a few weeks are left. You'll get an e-mail when you're assigned.
+- **Report an issue**: something has run out or is broken, or something in this app isn't working.
+- **Refunds**: leaving? Ask for your remaining balance here.
 
-- One coffee costs **{coffee_price}**, one drink **{drinks_price}**.
-- Please put at most five marks per box (four strokes and one across) and write new entries legibly.
-- Your current balance and every count and payment are under **My account**.
-
-## Joining
-1. Transfer a starting credit of 20 € (see *How to pay* below).
-2. Register in this app with your university e-mail address and the same name as on the list.
-3. Ask the accounting manager to put you on the coffee and/or drinks list. You'll appear on the next printed list.
-
-## How to pay
-Top up your balance whenever it gets low; you'll see a warning in the app below **{low_threshold}**. Payments are entered by the accounting manager, so it can take a few days until they show up.
+Each coffee is **{coffee_price}** and each drink **{drinks_price}**. Make your marks on the paper list next to the machine.
 
 ## Kitchen duty
-Everyone in the kitchen-duty pool takes turns keeping the kitchen usable, one week at a time, usually two people per week. It works in rounds: each round, everyone does one duty; people who joined later only owe the rounds since.
-- Keep your availability for the next **{weeks_ahead} weeks** filled in under **My availability**. It is required, and you'll get a reminder e-mail when weeks are missing.
-- You get an e-mail when you're assigned, and a reminder at the start of your week.
-- During your week: empty and refill the dishwasher, wipe the counters and the table, descale and clean the coffee machine, take out paper and bottles, and check milk and coffee beans.
-- Can't make it? Swap with someone and tell a duty manager.
-
-## Something ran out or is broken?
-Use **Report an issue**: milk, coffee beans, other supplies, a dirty kitchen or a broken machine. The right people are notified straight away.
-
-## Bought something for the kitchen?
-Upload the receipt under **Invoices** to get reimbursed. If you'd rather have the money before you buy, choose **Advance payment** there instead and send the receipt once you've made the purchase.
-
-## Leaving?
-Request your remaining balance under **Refund**. You'll be taken off the lists once it has been paid out.
-
-## Contact
-Questions about your balance or the lists: the accounting manager. Kitchen duty: the duty managers. Something not working in this app ({app_url}), or an idea to improve it? Use **Report an issue → App issues and suggestions**.
+What to do during your duty week: [Kitchen duties](https://pad.gwdg.de/r4sTfbuzTH6UCXbkppGjJA?both#Kitchen-duties).
 `;
 
-export const DEFAULT_ADMIN_INFO = `## Regular routine
-**Every week**
-- Check new **Issues** and make sure someone takes care of them.
-- Look at **Kitchen duty → Availability overview** and assign the coming weeks; the Assign dialog puts whoever owes the most duties first.
-- When **Kitchen duty → Rounds** says everyone has done their share, start the next round there.
+export const DEFAULT_ADMIN_INFO = `## Counting
+When a paper list has been collected, an admin opens a count under **Counting**. Open that count from the list there (don't start a new one), enter the marks for the people in your group, then tick your group as counted. The list shows which groups are still missing.
 
-**When a paper list is full (every 6–8 weeks)**
-1. Collect the coffee and drinks lists and print new ones under **Print lists** (set the list date to today).
-2. Enter the marks under **Counting**, one session per list and date. Enter or the arrow keys move between people.
-3. Check **Balances**: remind everyone below the threshold.
-
-**Whenever money comes in or goes out**
-- Record payments under **Payments** (PayPal, cash, bank transfer).
-- Handle **Invoices**: pay out reimbursements and advances, then mark them reimbursed.
-- Handle **Refunds**: pay out, then click *Mark as paid*. This records the payout, takes the person off both lists and, for a leaving admin, makes the nominated successor admin.
-
-## People and accounts
-- New people register themselves. Connect each account to their entry under **Accounts & roles**, then switch them on for coffee and/or drinks under **People**.
+## Your group
+- New people register themselves. Connect each new account to their entry under **Accounts**, then switch them on for coffee and/or drinks under **People**.
 - People with counts or payments can't be deleted; switch both lists off instead.
-- Give duty managers the *Manage kitchen duty* right, invoice helpers *Upload invoices*, and whoever looks after reported issues *Resolve reports*.
-- A **group admin** looks after one group: its people and their lists, connecting its new accounts, its balances, payments and counts. Group admins also see this admin part and admin-only updates, but can't change settings, roles, prices or starting balances.
+- Record payments from your group under **Payments**.
+- Check **Balances** and remind everyone below **{low_threshold}**.
+`;
 
-## Notifications
-Under **Settings → Notifications** you choose who gets which e-mail: reimbursement and advance requests, refund requests, and each kind of reported issue. Empty fields go to all admins.
-
-## Handing over
-Before you leave, request your refund and nominate your successor. Export everything under **Balances → Export Excel** first, and keep a copy of the current templates.
-
-## Prices
-A new price only applies from its start date (**Settings → Prices**); older counts keep their old price.
+export const DEFAULT_INVOICE_INFO = `- Bought something for the kitchen? Upload the receipt under **Invoices** to get the money back.
+- Need the money before you buy? Choose **Advance payment** there, then send the receipt to the accounting contact once you've bought it.
+- Say how you want to be paid (PayPal address or IBAN). The status in the list shows when it has been paid out.
 `;

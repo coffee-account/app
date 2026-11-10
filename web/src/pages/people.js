@@ -1,4 +1,4 @@
-import { html, useState, useLoad, Loading, Modal, Field, toast, useBusy, fmtEUR, ConfirmAction, usePersisted, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useLoad, Loading, Modal, Field, toast, useBusy, ConfirmAction, usePersisted, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import * as api from "../lib/api.js";
 import { personName, sortPeople, dutyRound } from "../lib/accounting.js";
 import { useApp } from "../lib/context.js";
@@ -31,7 +31,7 @@ export function PeoplePage() {
   return html`
     <div class="page-head"><div><h1>${group ? `People · ${group}` : "People"}</h1><p>Who is on the coffee and drinks lists (these decide who gets printed) and in the kitchen-duty pool.</p></div>
       <button class="btn primary" onClick=${() => setEditing({ active_coffee: true, active_drinks: false, active_duty: true, duty_carryover: 0,
-        duty_rounds_before: dutyRound(app.settings), starting_balance: 0, group_name: group || "" })}>Add person</button></div>
+        duty_rounds_before: dutyRound(app.settings), group_name: group || "" })}>Add person</button></div>
     <${Loading} state=${state}>${({ people, groups, profiles }) => {
       const account = new Map(profiles.filter((x) => x.person_id).map((x) => [x.person_id, x]));
       let rows = people.filter((p) => {
@@ -54,7 +54,7 @@ export function PeoplePage() {
           <span class="count">${rows.length} shown · ${people.filter((p) => p.active_coffee).length} coffee · ${people.filter((p) => p.active_drinks).length} drinks · ${people.filter((p) => p.active_duty).length} kitchen duty</span>
         </div>
         <div class="table-wrap"><table class="data">
-          <thead><tr><th>Name</th><th>Group</th><th>E-mail</th><th class="center">Coffee</th><th class="center">Drinks</th><th class="center">Kitchen duty</th><th class="num">Start balance</th><th>Account</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Group</th><th>E-mail</th><th class="center">Coffee</th><th class="center">Drinks</th><th class="center">Kitchen duty</th><th>Account</th><th></th></tr></thead>
           <tbody>${rows.map((p) => html`<tr class=${isActive(p) ? "" : "inactive"}>
             <td>${p.last_name}, ${p.first_name}</td>
             <td>${p.group_name || ""}</td>
@@ -62,7 +62,6 @@ export function PeoplePage() {
             <td class="center"><input type="checkbox" aria-label="Active for coffee" checked=${p.active_coffee} disabled=${busy} onChange=${() => toggle(p, "active_coffee")} /></td>
             <td class="center"><input type="checkbox" aria-label="Active for drinks" checked=${p.active_drinks} disabled=${busy} onChange=${() => toggle(p, "active_drinks")} /></td>
             <td class="center"><input type="checkbox" aria-label="In the kitchen-duty pool" checked=${p.active_duty} disabled=${busy} onChange=${() => toggle(p, "active_duty")} /></td>
-            <td class="num ${Number(p.starting_balance) < 0 ? "neg" : Number(p.starting_balance) ? "" : "zero"}">${fmtEUR(p.starting_balance)}</td>
             <td>${account.has(p.id) ? html`<span class="badge ok">linked</span>`
               : p.email && !group ? html`<button class="btn-text" disabled=${busy} onClick=${() => invite(p)}>Invite</button>` : html`<span class="muted">—</span>`}</td>
             <td class="num"><span class="row-actions row end">
@@ -77,13 +76,13 @@ export function PeoplePage() {
 
 function PersonModal({ person, groups, onClose, onSaved }) {
   const app = useApp();
-  const locked = !app.isAdmin; // group admins: own group only, no starting balance
+  const locked = !app.isAdmin; // group admins: own group only
   const [p, setP] = useState({ ...person });
   const [busy, run] = useBusy();
   const set = (k, v) => setP((x) => ({ ...x, [k]: v }));
   return html`<${Modal} title=${p.id ? "Edit person" : "Add person"} onClose=${onClose}>
-    <form class="grid" onSubmit=${(e) => { e.preventDefault(); run(async () => { const { starting_balance, ...rest } = p;
-      await api.savePerson(locked ? rest : { ...rest, starting_balance: Number(String(starting_balance).replace(",", ".")) || 0 }); toast("Saved"); onSaved(); }); }}>
+    <form class="grid" onSubmit=${(e) => { e.preventDefault(); run(async () => { const { starting_balance, ...rest } = p; // starting balances come from the spreadsheet import, not from here
+      await api.savePerson(rest); toast("Saved"); onSaved(); }); }}>
       <div class="form-grid">
         <${Field} label="First name"><input required value=${p.first_name || ""} onInput=${(e) => set("first_name", e.target.value)} /><//>
         <${Field} label="Last name"><input required value=${p.last_name || ""} onInput=${(e) => set("last_name", e.target.value)} /><//>
@@ -91,7 +90,6 @@ function PersonModal({ person, groups, onClose, onSaved }) {
           <option value="">—</option>${groups.map((g) => html`<option value=${g.name}>${g.name}</option>`)}</select><//>
         <${Field} label="E-mail" hint="Used for duty e-mails, and to connect their account automatically when they register.">
           <input type="email" value=${p.email || ""} onInput=${(e) => set("email", e.target.value)} /><//>
-        ${!locked && html`<${Field} label="Starting balance (€)"><input inputmode="decimal" value=${p.starting_balance ?? 0} onInput=${(e) => set("starting_balance", e.target.value)} /><//>`}
       </div>
       <div class="row">
         <label class="check"><input type="checkbox" checked=${p.active_coffee} onChange=${(e) => set("active_coffee", e.target.checked)} /> On the coffee list</label>

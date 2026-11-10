@@ -14,9 +14,11 @@
 //   refund_requested   { request_id }            the requester or admin
 //   issue_reported     { issue_id }              the reporter or admin
 //   issue_resolved     { issue_id }              admin or "resolve reports" right: tells the reporter
+//
+// Subjects and texts come from the email_templates table, edited on the app's E-mails page.
 
 import { createClient } from "npm:@supabase/supabase-js@2.117.2";
-import { escapeHtml, layout, sendMail } from "./mailer.ts";
+import { escapeHtml, layout, renderTemplate, sendMail } from "./mailer.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 // Newer projects get secret keys in SUPABASE_SECRET_KEYS; older ones the legacy service-role key.
@@ -133,6 +135,21 @@ async function profileEmail(id: string | null): Promise<string | undefined> {
   return data?.email ?? undefined;
 }
 
+async function emailTemplates(): Promise<Map<string, { subject: string; body: string }>> {
+  const { data } = await db.from("email_templates").select("key, subject, body");
+  return new Map((data ?? []).map((t) => [t.key, t]));
+}
+
+// Subject and HTML for one of the editable e-mails (s.templates is read once per request).
+async function compose(key: string, vars: Record<string, unknown>, blocks: Record<string, string>, s: Record<string, any>) {
+  const tpl = s.templates.get(key);
+  if (!tpl) throw new HttpError(500, `The e-mail text "${key}" is missing. Run the latest database migration.`);
+  const { subject, html } = renderTemplate(tpl, { app_url: APP_URL, ...vars }, blocks);
+  return { subject, html: layout(subject, html, s.app_name ?? "Coffee & Drinks", APP_URL) };
+}
+
+const table = (rows: string) => `<table style="border-collapse:collapse;font-size:14px">${rows}</table>`;
+
 const row = (k: string, v: unknown) =>
   `<tr><td style="padding:4px 12px 4px 0;color:#7a716a;vertical-align:top">${k}</td><td style="padding:4px 0;white-space:pre-line">${escapeHtml(v)}</td></tr>`;
 
@@ -159,25 +176,19 @@ async function invoiceSubmitted(caller: Caller, body: any, s: Record<string, any
   const submitterEmail = await profileEmail(inv.submitted_by);
   const amount = `${Number(inv.amount).toFixed(2)} €`;
   const advance = inv.kind === "advance";
-  const html = layout(
-    advance ? "Advance payment requested" : "Invoice submitted for reimbursement",
-    `${advance ? `<p style="font-size:14px">${escapeHtml(inv.submitter_name ?? "Someone")} would like the money in advance for something they will buy for the kitchen.</p>` : ""}
-    <table style="border-collapse:collapse;font-size:14px">
-      ${row("Amount", amount)}${row(advance ? "Needed by" : "Invoice date", inv.invoice_date)}${row(advance ? "Where" : "Supplier", inv.supplier)}
+  const details = `${table(`
+      ${row(advance ? "Amount needed" : "Amount", amount)}${row(advance ? "Needed by" : "Invoice date", inv.invoice_date)}${row(advance ? "Where" : "Supplier", inv.supplier)}
       ${row(advance ? "What for" : "Description", inv.description ?? "")}${row("Submitted by", `${inv.submitter_name ?? ""} ${submitterEmail ? `<${submitterEmail}>` : ""}`)}
-      ${row(advance ? "Pay to" : "Reimbursement details", inv.reimburse_note ?? "")}
-    </table>
-    ${link ? `<p style="font-size:14px"><a href="${escapeHtml(link)}" style="color:#8a4b2a">Download the ${advance ? "attached quote" : "invoice"}</a> (link valid for 14 days)${attachments.length ? " — also attached." : ""}</p>` : ""}
-    ${advance ? `<p style="font-size:14px">The receipt will follow once the purchase has been made.</p>` : ""}`,
-    s.app_name ?? "Coffee & Drinks",
-    APP_URL,
-  );
+      ${row(advance ? "Pay to" : "Reimbursement details", inv.reimburse_note ?? "")}`)}
+    ${link ? `<p style="font-size:14px"><a href="${escapeHtml(link)}" style="color:#8a4b2a">Download the ${advance ? "attached quote" : "invoice"}</a> (link valid for 14 days)${attachments.length ? " — also attached." : ""}</p>` : ""}`;
+  const { subject, html } = await compose(advance ? "advance_requested" : "invoice_submitted",
+    { submitter: inv.submitter_name ?? "Someone", amount, supplier: inv.supplier }, { details }, s);
   try {
     await sendMail({
       to,
       cc: cfg.cc_submitter && submitterEmail ? [submitterEmail] : [],
       replyTo: submitterEmail,
-      subject: `${advance ? "Advance payment request" : "Reimbursement request"}: ${amount} – ${inv.supplier}`,
+      subject,
       html,
       attachments,
     });
@@ -199,20 +210,15 @@ async function refundRequested(caller: Caller, body: any, s: Record<string, any>
   const successor = r.successor_profile_id ? await profileEmail(r.successor_profile_id) : null;
   const requesterEmail = await profileEmail(r.profile_id);
   const leavingOnly = Number(r.amount) === 0;
-  const html = layout(
-    leavingOnly ? "Leaving the coffee lists" : "Refund requested",
-    `<table style="border-collapse:collapse;font-size:14px">
+  const details = table(`
       ${row("Person", `${person?.name ?? ""} <${requesterEmail ?? ""}>`)}${row("Amount", `${Number(r.amount).toFixed(2)} €`)}
       ${row("How", r.method ?? "")}${row("Details", r.details ?? "")}
       ${row("Leaving the lists", r.leaving ? "yes" : "no")}
-      ${successor ? row("Proposed successor as admin", successor) : ""}
-    </table>
-    <p style="font-size:14px">${leavingOnly ? "There is nothing to pay out. Confirm it" : "Pay it out, then mark it as paid"} under <a href="${escapeHtml(APP_URL)}#/refunds" style="color:#8a4b2a">Refunds</a>${leavingOnly ? " with “Mark as paid” to take them off the lists" : ""}.</p>`,
-    s.app_name ?? "Coffee & Drinks",
-    APP_URL,
-  );
+      ${successor ? row("Proposed successor as admin", successor) : ""}`);
+  const { subject, html } = await compose(leavingOnly ? "leaving_requested" : "refund_requested",
+    { person: person?.name ?? "", amount: `${Number(r.amount).toFixed(2)} €` }, { details }, s);
   try {
-    await sendMail({ to: recipients, replyTo: requesterEmail, subject: leavingOnly ? `Leaving: ${person?.name ?? ""}` : `Refund request: ${Number(r.amount).toFixed(2)} € – ${person?.name ?? ""}`, html });
+    await sendMail({ to: recipients, replyTo: requesterEmail, subject, html });
     await db.from("refund_requests").update({ notified_at: new Date().toISOString(), notify_error: null }).eq("id", r.id);
     return { sent: recipients.length };
   } catch (e) {
@@ -234,18 +240,12 @@ async function issueReported(caller: Caller, body: any, s: Record<string, any>) 
   const to = addresses(s.notifications?.issues?.[it.category]);
   const recipients = to.length ? to : await adminEmails();
   const reporterEmail = await profileEmail(it.reported_by);
-  const html = layout(
-    `Reported: ${ISSUE_LABEL[it.category] ?? it.category}`,
-    `<table style="border-collapse:collapse;font-size:14px">
+  const details = table(`
       ${row("What", it.title)}${it.description ? row("Details", it.description) : ""}${it.context ? row("Where", it.context) : ""}
-      ${row("Reported by", `${it.reporter_name ?? ""} ${reporterEmail ? `<${reporterEmail}>` : ""}`)}
-    </table>
-    <p style="font-size:14px"><a href="${escapeHtml(APP_URL)}#/issues" style="color:#8a4b2a">Open the issue list</a> to mark it as resolved.</p>`,
-    s.app_name ?? "Coffee & Drinks",
-    APP_URL,
-  );
+      ${row("Reported by", `${it.reporter_name ?? ""} ${reporterEmail ? `<${reporterEmail}>` : ""}`)}`);
+  const { subject, html } = await compose("issue_reported", { category: ISSUE_LABEL[it.category] ?? it.category, title: it.title }, { details }, s);
   try {
-    await sendMail({ to: recipients, replyTo: reporterEmail, subject: it.category === "app" ? `App issue or suggestion: ${it.title}` : `Kitchen: ${ISSUE_LABEL[it.category] ?? it.category} – ${it.title}`, html });
+    await sendMail({ to: recipients, replyTo: reporterEmail, subject, html });
     await db.from("issues").update({ notified_at: new Date().toISOString(), notify_error: null }).eq("id", it.id);
     return { sent: recipients.length };
   } catch (e) {
@@ -259,16 +259,7 @@ async function issueResolved(caller: Caller, body: any, s: Record<string, any>) 
   const { data: it } = await db.from("issues").select("*").eq("id", body.issue_id).single();
   const email = it && await profileEmail(it.reported_by);
   if (!email) return { sent: false };
-  await sendMail({
-    to: [email],
-    subject: `Resolved: ${it.title}`,
-    html: layout(
-      "Thanks for reporting",
-      `<p style="font-size:14px">"${escapeHtml(it.title)}" has been marked as resolved.</p>${it.resolution ? `<p style="font-size:14px">${escapeHtml(it.resolution)}</p>` : ""}`,
-      s.app_name ?? "Coffee & Drinks",
-      APP_URL,
-    ),
-  });
+  await sendMail({ to: [email], ...await compose("issue_resolved", { title: it.title, resolution: it.resolution ?? "" }, {}, s) });
   return { sent: true };
 }
 
@@ -288,19 +279,10 @@ async function dutyAssigned(caller: Caller, body: any, s: Record<string, any>) {
       results.push({ id: a.id, sent: false, error: "No e-mail address" });
       continue;
     }
-    const html = layout(
-      `You are on kitchen duty in ${weekLabel(a.week_start)}`,
-      `<p style="font-size:14px">Hi ${escapeHtml(p.name.split(" ")[0])},</p>
-       <p style="font-size:14px">you have been assigned to kitchen duty in <b>${escapeHtml(weekLabel(a.week_start))}</b>.
-       ${names.length ? `You share it with ${escapeHtml(names.join(", "))}.` : ""}</p>
-       ${a.note ? `<p style="font-size:14px">Note: ${escapeHtml(a.note)}</p>` : ""}
-       ${s.duty?.info ? `<p style="font-size:14px;white-space:pre-line">${escapeHtml(s.duty.info)}</p>` : ""}
-       <p style="font-size:14px">If you cannot make it, please swap with someone and tell the coffee duty managers.</p>`,
-      s.app_name ?? "Coffee & Drinks",
-      APP_URL,
-    );
+    const mail = await compose("duty_assigned",
+      { first_name: p.name.split(" ")[0], week: weekLabel(a.week_start), mates: names.join(", "), note: a.note ?? "" }, {}, s);
     try {
-      await sendMail({ to: [p.email], subject: `Kitchen duty: ${weekLabel(a.week_start)}`, html });
+      await sendMail({ to: [p.email], ...mail });
       await db.from("duty_assignments").update({ notified_at: new Date().toISOString(), notify_error: null }).eq("id", a.id);
       results.push({ id: a.id, sent: true });
     } catch (e) {
@@ -315,16 +297,7 @@ async function dutyRemoved(caller: Caller, body: any, s: Record<string, any>) {
   if (!isDutyManager(caller)) throw new HttpError(403, "Not allowed");
   const p = (await personEmails([body.person_id])).get(body.person_id);
   if (!p?.email) return { sent: false };
-  await sendMail({
-    to: [p.email],
-    subject: `Kitchen duty cancelled: ${weekLabel(body.week_start)}`,
-    html: layout(
-      "Kitchen duty cancelled",
-      `<p style="font-size:14px">Hi ${escapeHtml(p.name.split(" ")[0])}, you are no longer on kitchen duty in <b>${escapeHtml(weekLabel(body.week_start))}</b>.</p>`,
-      s.app_name ?? "Coffee & Drinks",
-      APP_URL,
-    ),
-  });
+  await sendMail({ to: [p.email], ...await compose("duty_removed", { first_name: p.name.split(" ")[0], week: weekLabel(body.week_start) }, {}, s) });
   return { sent: true };
 }
 
@@ -340,22 +313,26 @@ async function invite(caller: Caller, body: any) {
   return { invited: p.email };
 }
 
-// Which of the coming weeks a person still has to fill in.
-function missingWeeks(weeksAhead: number, filled: Set<string>): string[] {
+// Which of the coming weeks a person has to fill in now: none while the next minWeeks are answered,
+// otherwise every open week up to weeksAhead (as missingAvailability in the web app).
+function missingWeeks(weeksAhead: number, minWeeks: number, filled: Set<string>): string[] {
   const start = mondayOf(todayBerlin());
-  const out: string[] = [];
+  const open: string[] = [];
+  let due = false;
   for (let i = 0; i < weeksAhead; i++) {
     const w = iso(addDays(start, i * 7));
-    if (!filled.has(w)) out.push(w);
+    if (filled.has(w)) continue;
+    open.push(w);
+    if (i < minWeeks) due = true;
   }
-  return out;
+  return due ? open : [];
 }
 
 async function weekly(caller: Caller, s: Record<string, any>) {
   if (!isAdmin(caller)) throw new HttpError(403, "Not allowed");
-  const appName = s.app_name ?? "Coffee & Drinks";
   const av = s.availability ?? {};
   const weeksAhead = Number(av.weeks_ahead ?? 6);
+  const minWeeks = Math.min(weeksAhead, Number(av.min_weeks ?? 3));
   const summary = { availability_reminders: 0, duty_reminders: 0, errors: [] as string[] };
 
   if (av.reminders !== false) {
@@ -369,25 +346,14 @@ async function weekly(caller: Caller, s: Record<string, any>) {
       if (av.required_for !== "all" && !p.active_duty) continue;
       // Weeks without kitchen duty need no answer.
       const filled = new Set([...(avail ?? []).filter((a) => a.person_id === p.id), ...(free ?? [])].map((a) => a.week_start));
-      const missing = missingWeeks(weeksAhead, filled);
+      const missing = missingWeeks(weeksAhead, minWeeks, filled);
       if (!missing.length) continue;
       const email = p.email ?? profiles?.find((x) => x.person_id === p.id)?.email;
       if (!email) continue;
       try {
-        await sendMail({
-          to: [email],
-          subject: "Reminder: please fill in your kitchen-duty availability",
-          html: layout(
-            "Please fill in your availability",
-            `<p style="font-size:14px">Hi ${escapeHtml(p.first_name)},</p>
-             <p style="font-size:14px">filling in your kitchen-duty availability is required. You have not answered for
-             ${missing.length} of the next ${weeksAhead} weeks:</p>
-             <ul style="font-size:14px">${missing.map((w) => `<li>${escapeHtml(weekLabel(w))}</li>`).join("")}</ul>
-             <p style="font-size:14px"><a href="${escapeHtml(APP_URL)}#/availability" style="color:#8a4b2a">Fill in availability</a></p>`,
-            appName,
-            APP_URL,
-          ),
-        });
+        const weeks = `<ul style="font-size:14px">${missing.map((w) => `<li>${escapeHtml(weekLabel(w))}</li>`).join("")}</ul>`;
+        await sendMail({ to: [email], ...await compose("availability_reminder",
+          { first_name: p.first_name, count: missing.length, weeks_ahead: weeksAhead }, { weeks }, s) });
         summary.availability_reminders++;
       } catch (e) {
         summary.errors.push(`${email}: ${errMsg(e)}`);
@@ -404,18 +370,8 @@ async function weekly(caller: Caller, s: Record<string, any>) {
       const p = people.get(r.person_id);
       if (!p?.email) continue;
       try {
-        await sendMail({
-          to: [p.email],
-          subject: `Reminder: kitchen duty this week (${weekLabel(week)})`,
-          html: layout(
-            "You are on kitchen duty this week",
-            `<p style="font-size:14px">Hi ${escapeHtml(p.name.split(" ")[0])}, a reminder that you are on kitchen duty in
-             <b>${escapeHtml(weekLabel(week))}</b> together with ${escapeHtml(names.filter((n) => n !== p.name).join(", ") || "nobody else")}.</p>
-             ${s.duty?.info ? `<p style="font-size:14px;white-space:pre-line">${escapeHtml(s.duty.info)}</p>` : ""}`,
-            appName,
-            APP_URL,
-          ),
-        });
+        await sendMail({ to: [p.email], ...await compose("duty_reminder",
+          { first_name: p.name.split(" ")[0], week: weekLabel(week), mates: names.filter((n) => n !== p.name).join(", ") }, {}, s) });
         summary.duty_reminders++;
       } catch (e) {
         summary.errors.push(`${p.email}: ${errMsg(e)}`);
@@ -430,7 +386,8 @@ Deno.serve(async (req) => {
   try {
     const caller = await identify(req);
     const body = await req.json().catch(() => ({}));
-    const s = await settings();
+    const [s, templates] = await Promise.all([settings(), emailTemplates()]);
+    s.templates = templates;
     switch (body.type) {
       case "invoice_submitted": return json(await invoiceSubmitted(caller, body, s));
       case "duty_assigned": return json(await dutyAssigned(caller, body, s));

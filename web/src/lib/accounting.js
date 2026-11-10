@@ -77,7 +77,8 @@ export function sortPeople(list, by = "group") {
 
 export function availabilityRules(settings) {
   const a = settings.availability || {};
-  return { weeksAhead: Number(a.weeks_ahead ?? 6), requiredFor: a.required_for || "active" };
+  const weeksAhead = Number(a.weeks_ahead ?? 6);
+  return { weeksAhead, minWeeks: Math.min(weeksAhead, Number(a.min_weeks ?? 3)), requiredFor: a.required_for || "active" };
 }
 
 /** Everyone in the kitchen-duty pool answers (or every connected account, if set so). */
@@ -87,11 +88,16 @@ export function availabilityRequired(settings, person) {
   return requiredFor === "all" || !!person.active_duty;
 }
 
-/** Weeks (Mondays) in the mandatory window the person has not answered yet; weeks without duty don't count. */
+/**
+ * Weeks (Mondays) the person has to fill in now; weeks without duty don't count. Nothing is due while
+ * the next `minWeeks` weeks are answered; once they aren't, every open week up to `weeksAhead` is.
+ * So answers always reach 3–6 weeks ahead without asking every week.
+ */
 export function missingAvailability(settings, rows, freeWeeks = []) {
-  const { weeksAhead } = availabilityRules(settings);
+  const { weeksAhead, minWeeks } = availabilityRules(settings);
   const filled = new Set([...rows.map((r) => r.week_start), ...freeWeeks.map((f) => f.week_start ?? f)]);
-  return weeksFrom(weeksAhead, mondayOf()).filter((w) => !filled.has(w));
+  const open = weeksFrom(weeksAhead, mondayOf()).filter((w) => !filled.has(w));
+  return weeksFrom(minWeeks, mondayOf()).some((w) => !filled.has(w)) ? open : [];
 }
 
 // ── Kitchen-duty rounds ──

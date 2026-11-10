@@ -57,12 +57,12 @@ Then open <http://localhost:8000>. Run it from the project folder. It serves `we
 ### 1. Supabase project
 
 1. Create a free account at <https://supabase.com>, then a new project. Choose region **Central EU (Frankfurt)** for GDPR.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261107000000_counted_groups.sql`: which groups are counted per session). Each script only needs to run once per project.
+2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261111000000_emails_and_duty_pool.sql`: editable e-mail texts, duty managers manage the duty pool, and the first-steps tour). Each script only needs to run once per project.
 3. Under **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 
 ### 2. Email sending
 
-Every email the app sends goes through the `notify` function: invoices, duty assignments and reminders. Sign-up confirmations and password resets come from Supabase Auth itself. You need a sending service for both.
+Every email the app sends goes through the `notify` function: invoices, duty assignments and reminders. Their subjects and texts are edited in the app under **E-mails**. Sign-up confirmations and password resets come from Supabase Auth itself. You need a sending service for both.
 
 **Option A: Resend (recommended).** Free up to 3,000 emails a month.
 1. Create an account at <https://resend.com>.
@@ -107,7 +107,7 @@ JWT verification is off because the weekly job calls the function without a user
 
 ### 4. Weekly reminders
 
-Edit `supabase/cron.sql` to fill in your project reference and `CRON_SECRET`, then run it in the SQL Editor. Reminders go out every Monday at 08:00 UTC. Admins can also send them at any time with **Kitchen duty → Send reminders now**.
+Edit `supabase/cron.sql` to fill in your project reference and `CRON_SECRET`, then run it in the SQL Editor. Reminders go out every Monday at 08:00 UTC. Admins can also send them at any time with **Duty schedule → Send reminders now**.
 
 ### 5. Publish on GitHub Pages
 
