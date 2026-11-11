@@ -209,6 +209,12 @@ class Query {
       });
       this.store.save();
     } else if (this.op === "update") {
+      if (this.t === "people" && this.payload.email) {
+        const mine = new Set(rows.filter((r) => this.match(r)).map((r) => r.id));
+        if (rows.some((r) => !mine.has(r.id) && r.email?.toLowerCase() === this.payload.email.toLowerCase())) {
+          return { data: null, error: { message: 'duplicate key value violates unique constraint "people_email_key"' } };
+        }
+      }
       out = rows.filter((r) => this.match(r)).map((r) => Object.assign(r, this.payload)).map((r) => ({ ...r }));
       this.store.save();
     } else if (this.op === "delete") {
@@ -342,6 +348,14 @@ export function createDemoClient(notify) {
         const prof = store.db.profiles.find((x) => x.id === args.profile);
         if (!prof) return { data: null, error: { message: "Account not found" } };
         Object.assign(prof, name === "connect_account" ? { person_id: args.person, suggested_person_id: null } : { person_id: null });
+        if (name === "connect_account") {
+          // As the database: the e-mail moves off entries no account uses, to this person if they have none.
+          const db = store.db;
+          const key = prof.email.toLowerCase();
+          for (const p of db.people) if (p.id !== args.person && p.email?.toLowerCase() === key && !db.profiles.some((x) => x.person_id === p.id)) p.email = null;
+          const target = db.people.find((p) => p.id === args.person);
+          if (target && !target.email && !db.people.some((p) => p.email?.toLowerCase() === key)) target.email = prof.email;
+        }
         store.save();
         return { data: null, error: null };
       }

@@ -57,9 +57,23 @@ export async function savePerson(p) {
   const row = { ...p };
   if ("email" in row) row.email = row.email?.trim() || null;
   if ("group_name" in row) row.group_name = row.group_name || null;
-  if (row.id) return q(sb.from("people").update(row).eq("id", row.id).select().single());
-  delete row.id;
-  return q(sb.from("people").insert(row).select().single());
+  try {
+    if (row.id) return await q(sb.from("people").update(row).eq("id", row.id).select().single());
+    delete row.id;
+    return await q(sb.from("people").insert(row).select().single());
+  } catch (e) {
+    if (row.email && /people_email_key|duplicate key/i.test(e.message)) throw await emailTaken(row);
+    throw e;
+  }
+}
+
+/** E-mail addresses are unique on the list: say which entry already has this one. */
+async function emailTaken(row) {
+  const people = await listPeople().catch(() => []);
+  const other = people.find((x) => x.id !== row.id && x.email?.toLowerCase() === row.email.toLowerCase());
+  if (!other) return new Error(`${row.email} is already used by another entry on the list. Remove it there first.`);
+  const lists = other.active_coffee || other.active_drinks || other.active_duty ? "" : " (not on any list: set People to show Everyone to find it)";
+  return new Error(`${row.email} is already used by ${other.first_name} ${other.last_name}${lists}. Remove it there first.`);
 }
 export async function deletePerson(id) {
   try {
