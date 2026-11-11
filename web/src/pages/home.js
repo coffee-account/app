@@ -59,8 +59,11 @@ export function HomePage() {
             : html`<${EmptyState} drawing=${html`<${WeekCalendar} size=${96} />`}
                 action=${html`<a class="btn" href="#/availability">Update availability</a>`}>No duty coming up.<//>`}
         </div>
-        ${settings.payment_info && html`<div><h2>How to pay</h2>
-          <div class="card"><p style="white-space:pre-line;margin:0;font-family:var(--font-text);font-size:16px">${settings.payment_info}</p></div></div>`}
+        ${(settings.payment_info || settings.payment_qr) && html`<div><h2>How to pay</h2>
+          <div class="card pay-card">
+            ${settings.payment_info && html`<p style="white-space:pre-line;margin:0;font-family:var(--font-text);font-size:16px">${settings.payment_info}</p>`}
+            ${settings.payment_qr && html`<figure><img class="pay-qr" src=${settings.payment_qr} alt="PayPal QR code" /><figcaption class="small muted">Scan with the PayPal app</figcaption></figure>`}
+          </div></div>`}
       </div>
       <h2 class="section-title">History</h2>
       <div class="table-wrap"><table class="data normal">

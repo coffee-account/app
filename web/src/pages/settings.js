@@ -29,6 +29,7 @@ function GeneralSettings({ settings, onSaved }) {
     duty: { people_per_week: 2, info: "", reminders: true, ...settings.duty },
     balance: { low_threshold: -10, starting_label: "Starting balance", ...settings.balance },
     payment_info: settings.payment_info ?? "",
+    payment_qr: settings.payment_qr ?? "", // PayPal QR code shown with "How to pay" (a data URL, "" for none)
     notifications: {
       refund: settings.notifications?.refund ?? "",
       issues: Object.fromEntries([...ISSUE_CATEGORIES, APP_BUG].map(([k]) => [k, settings.notifications?.issues?.[k] ?? ""])),
@@ -64,6 +65,7 @@ function GeneralSettings({ settings, onSaved }) {
           <${Field} label="Low balance warning below (€)"><input inputmode="decimal" value=${s.balance.low_threshold} onInput=${(e) => sub("balance", { low_threshold: e.target.value })} /><//>
           <${Field} label="Label for the starting balance"><input value=${s.balance.starting_label} onInput=${(e) => sub("balance", { starting_label: e.target.value })} /><//>
           <${Field} label="How to pay (shown to members)"><textarea value=${s.payment_info} onInput=${(e) => setS({ ...s, payment_info: e.target.value })}></textarea><//>
+          <${PaymentQr} value=${s.payment_qr} onChange=${(v) => setS({ ...s, payment_qr: v })} />
         </div>
       </div>
       <div class="card">
@@ -154,5 +156,24 @@ function Groups({ groups: all, reload }) {
       <input required placeholder="New group" value=${name} onInput=${(e) => setName(e.target.value)} style="max-width:240px" />
       <button class="btn" disabled=${busy}>Add group</button>
     </form>
+  </div>`;
+}
+
+/** The PayPal QR code shown under "How to pay" on My account: an image file, kept as a data URL. */
+function PaymentQr({ value, onChange }) {
+  const onFile = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    if (file.size > 400_000) { toast("Please use an image under 400 KB", "error"); return; }
+    const reader = new FileReader();
+    reader.onload = () => onChange(reader.result);
+    reader.readAsDataURL(file);
+  };
+  return html`<div class="field"><span>PayPal QR code (shown with How to pay)</span>
+    ${value
+      ? html`<div class="row" style="align-items:flex-end;gap:14px"><img class="pay-qr" src=${value} alt="PayPal QR code" />
+          <button type="button" class="btn-text" onClick=${() => onChange("")}>Remove</button></div>`
+      : html`<input type="file" accept="image/png,image/jpeg,image/svg+xml" onChange=${onFile} />`}
+    <small class="muted">In the PayPal app: your profile → QR code → save or share it as an image. Save the settings afterwards.</small>
   </div>`;
 }

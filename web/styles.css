@@ -403,3 +403,8 @@ table.data tr.group-row .group-done.on { color: var(--ok); }
 .checklist .tick { flex: none; width: 18px; height: 18px; border: 1.5px solid var(--ink-mute); border-radius: 50%; font-size: 12px; line-height: 15px; text-align: center; color: var(--ok); }
 .checklist li.done .tick { border-color: var(--ok); }
 @media (max-width: 760px) { .tour-card { left: 16px; bottom: 16px; } }
+
+/* PayPal QR code with "How to pay" (My account, Settings). */
+.pay-card { display: flex; gap: 20px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.pay-card figure { margin: 0; text-align: center; }
+.pay-qr { width: 150px; height: auto; display: block; background: #fff; border-radius: 8px; padding: 6px; border: 1px solid var(--rule-soft); }
