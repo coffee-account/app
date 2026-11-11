@@ -5,7 +5,8 @@ import { fmtDate, isoDate } from "../lib/dates.js";
 import { readStatement, matchPayer, normName } from "../lib/paypal.js";
 import { Figures, EmptyState, ReceiptCarrier } from "../lib/drawings.js";
 
-export function PaypalPage() {
+/** The "PayPal import" tab of the Payments page. */
+export function PaypalImport() {
   const state = useLoad(async () => {
     const [people, payments, aliases, ignored, invoices, refunds, payouts, settings, groups] = await Promise.all([
       api.listPeople(), api.listPayments(), api.listAliases(), api.listIgnored(),
@@ -31,8 +32,7 @@ export function PaypalPage() {
   };
 
   return html`
-    <div class="page-head"><div><h1>PayPal import</h1>
-      <p>Book incoming payments and payouts from a PayPal statement. Known payers are matched for you; nothing is saved until you confirm.</p></div></div>
+    <p class="lede" style="margin-bottom:14px">Book incoming payments and payouts from a PayPal statement. Known payers are matched for you; nothing is saved until you confirm.</p>
     <div class="grid cols-2" style="margin-bottom:8px">
       <label class="upload">
         <span>${fileName || "Choose the PayPal CSV file"}</span>
@@ -62,15 +62,14 @@ export function PaypalPage() {
             PayPal balance in this file: <b>${fmtEUR(statement.balance.amount)}</b> on ${fmtDate(statement.balance.date)}.
             ${newer ? " It's saved as the current PayPal balance when you record payments or payouts." : " Your saved balance is newer, so it stays."}
             ${newer && html` <button class="btn-text" onClick=${() => done().then(() => toast("PayPal balance saved"))}>Save balance only</button>`}</div>`}
-          <div class="tabs">
-            <button class=${tab === "in" ? "active" : ""} onClick=${() => setTab("in")}>Incoming payments (${statement.payments.length})</button>
-            <button class=${tab === "out" ? "active" : ""} onClick=${() => setTab("out")}>Payouts (${statement.payouts.length})</button>
+          <div class="seg" role="group" aria-label="Show" style="margin-bottom:14px">
+            <button class=${tab === "in" ? "on" : ""} aria-pressed=${tab === "in"} onClick=${() => setTab("in")}>Money in (${statement.payments.length})</button>
+            <button class=${tab === "out" ? "on" : ""} aria-pressed=${tab === "out"} onClick=${() => setTab("out")}>Money out (${statement.payouts.length})</button>
           </div>
           ${tab === "in"
             ? html`<${Review} key=${fileName} statement=${statement} data=${data} onDone=${done} onClear=${clear} />`
             : html`<${PayoutReview} key=${`${fileName}-out`} statement=${statement} data=${data} onDone=${done} onClear=${clear} />`}
         </div>`}
-        <${Payouts} data=${data} reload=${state.reload} />
         <${Aliases} data=${data} reload=${state.reload} />
       </div>`;
     }}<//>`;
@@ -176,17 +175,27 @@ function PayoutReview({ statement, data, onDone, onClear }) {
   </section>`;
 }
 
+/** The "Payouts" tab of the Payments page: money sent from the PayPal account, recorded by hand or imported. */
+export function PayoutsTab() {
+  const state = useLoad(async () => {
+    const [people, invoices, payouts] = await Promise.all([api.listPeople(), api.listInvoices(false), api.listPayouts()]);
+    return { people, invoices, payouts };
+  });
+  return html`<${Loading} state=${state}>${(data) => html`<${Payouts} data=${data} reload=${state.reload} />`}<//>`;
+}
+
 function Payouts({ data, reload }) {
   const isPending = usePendingDeletes();
   const list = data.payouts.filter((p) => !isPending(`payout:${p.id}`));
   const person = new Map(data.people.map((p) => [p.id, p]));
   const invoice = new Map(data.invoices.map((i) => [i.id, i]));
   const forget = (p) => deferDelete({ key: `payout:${p.id}`, message: "Payout removed from the list", commit: () => api.deletePayout(p.id), onDone: reload });
-  return html`<section style="margin-top:36px">
-    <h2>Recorded payouts</h2>
-    <p class="lede" style="margin-bottom:12px">Payouts recorded by hand come off the PayPal balance; removing one adds it back.
+  return html`<section>
+    <p class="lede" style="margin-bottom:12px">Money sent from the PayPal account. Record purchases and other payouts here; invoices and refunds
+      are marked paid on their own pages. Payouts recorded by hand come off the PayPal balance, and removing one adds it back.
       Removing a payout doesn't change the invoice status or a member's balance; correct those on their own pages.</p>
     <${ManualPayout} reload=${reload} />
+    ${list.length > 0 && html`<h2 class="section-title">Recorded payouts</h2>`}
     ${list.length > 0 && html`<div class="table-wrap"><table class="data">
       <thead><tr><th>Date</th><th>To</th><th>What</th><th class="num">Amount</th><th></th></tr></thead>
       <tbody>${list.slice(0, 200).map((p) => html`<tr key=${p.id}>
@@ -310,7 +319,7 @@ function Review({ statement, data, onDone, onClear }) {
 
   return html`<section>
     <${Figures} items=${[
-      { label: "Incoming payments", value: rows.length, sub: skippedTotal ? `${skippedTotal} other rows left out` : "in this file" },
+      { label: "Money in", value: rows.length, sub: skippedTotal ? `${skippedTotal} other rows left out` : "in this file" },
       { label: "Matched", value: count("matched"), tone: count("matched") ? "pos" : "", sub: "ready to record" },
       { label: "To check", value: count("suggested") + count("unknown"), tone: count("suggested") + count("unknown") ? "neg" : "", sub: "choose who paid" },
       { label: "Already done", value: count("booked") + count("ignored"), sub: "recorded or skipped before" },

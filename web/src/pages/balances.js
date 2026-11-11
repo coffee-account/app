@@ -112,7 +112,7 @@ function DetailModal({ row, label, onClose }) {
  * last PayPal import or by hand, then kept up to date by PayPal payments and payouts recorded by hand.
  */
 export function paypalFigure(paypal, linked = true, onEdit = null) {
-  const imp = linked ? html`<a href="#/paypal">PayPal import</a>` : "PayPal import";
+  const imp = linked ? html`<a href="#/payments?tab=import">PayPal import</a>` : "PayPal import";
   const edit = onEdit && html` · <button class="btn-text" onClick=${onEdit}>Edit</button>`;
   if (!paypal) return { label: "PayPal balance", value: "—", sub: html`appears after the first ${imp}${onEdit ? " or once you set it" : ""}${edit || ""}` };
   const from = paypal.source === "manual" ? "set by hand" : html`from the last ${imp}`;

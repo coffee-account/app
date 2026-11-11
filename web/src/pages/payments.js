@@ -1,11 +1,28 @@
-import { html, useState, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes, useLinkTab } from "../lib/ui.js";
+import { PaypalImport, PayoutsTab } from "./paypal.js";
 import * as api from "../lib/api.js";
 import { computeLedger, personName, sortPeople } from "../lib/accounting.js";
 import { isoDate, fmtDate } from "../lib/dates.js";
 import { useApp } from "../lib/context.js";
 
+// Payments by hand; for admins also payouts and the PayPal import as tabs (#/payments?tab=payouts|import).
+const TABS = [["record", "Money in", "Payments from members. A negative amount records a correction."],
+  ["payouts", "Money out", "Payouts from the PayPal account."],
+  ["import", "PayPal import", "Money in and out of the PayPal account, from its statement."]];
+
 export function PaymentsPage() {
   const app = useApp();
+  const [picked, setTab] = useLinkTab("record");
+  const tab = app.isAdmin && TABS.some(([k]) => k === picked) ? picked : "record";
+  return html`
+    <div class="page-head"><div><h1>Payments</h1><p>${TABS.find(([k]) => k === tab)[2]}</p></div></div>
+    ${app.isAdmin && html`<div class="tabs">
+      ${TABS.map(([k, label]) => html`<button class=${tab === k ? "active" : ""} onClick=${() => setTab(k)}>${label}</button>`)}
+    </div>`}
+    ${tab === "import" ? html`<${PaypalImport} />` : tab === "payouts" ? html`<${PayoutsTab} />` : html`<${RecordPayments} app=${app} />`}`;
+}
+
+function RecordPayments({ app }) {
   const group = app.isAdmin ? null : app.managedGroup; // group admins: their group's payments only
   const state = useLoad(() => api.loadLedgerData(undefined, group));
   const [q, setQ] = useState("");
@@ -13,8 +30,6 @@ export function PaymentsPage() {
   const isPending = usePendingDeletes();
 
   return html`
-    <div class="page-head"><div><h1>Payments</h1><p>Record money paid in. A negative amount records a pay-out or correction.</p></div>
-      <a class="btn" href="#/paypal">Import PayPal statement</a></div>
     <${Loading} state=${state}>${(data) => {
       const ledger = computeLedger(data);
       const byId = new Map(data.people.map((p) => [p.id, p]));
@@ -70,8 +85,8 @@ function PaymentForm({ people, ledger, onSaved }) {
         </select><//>
       <${Field} label="Date"><input type="date" required value=${f.paid_on} onInput=${set("paid_on")} /><//>
       <${Field} label="Amount (€)"><input inputmode="decimal" required value=${f.amount} onInput=${set("amount")} /><//>
-      <${Field} label="Method" hint=${/^paypal/i.test(f.method) ? "Also added to the PayPal balance." : null}><input list="pay-methods" value=${f.method} onInput=${set("method")} />
-        <datalist id="pay-methods"><option value="PayPal" /><option value="Cash" /><option value="Bank transfer" /><option value="Correction" /></datalist><//>
+      <${Field} label="Method" hint=${/^paypal/i.test(f.method) ? "Also added to the PayPal balance." : null}><select value=${f.method} onChange=${set("method")}>
+        ${["PayPal", "Cash", "Bank transfer", "Correction"].map((m) => html`<option value=${m}>${m}</option>`)}</select><//>
       <${Field} label="Note"><input value=${f.note} onInput=${set("note")} /><//>
       <button class="btn primary" disabled=${busy}>Record payment</button>
     </div>

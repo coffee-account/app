@@ -230,6 +230,18 @@ function fitInside(el, anchorEl) {
   else if (r.top < top) el.style.top = `${parseFloat(getComputedStyle(el).top) + (top - r.top)}px`;
 }
 
+/** The page's open tab, which a link can choose (#/duties?tab=rounds), e.g. from the tour. */
+export function useLinkTab(initial) {
+  const fromLink = () => new URLSearchParams(location.hash.split("?")[1] || "").get("tab");
+  const [tab, setTab] = useState(() => fromLink() || initial);
+  useEffect(() => {
+    const on = () => { const t = fromLink(); if (t) setTab(t); };
+    window.addEventListener("hashchange", on);
+    return () => window.removeEventListener("hashchange", on);
+  }, []);
+  return [tab, setTab];
+}
+
 /** useState that remembers its value in this browser (sort order, filters). */
 export function usePersisted(key, initial) {
   const [value, setValue] = useState(() => {

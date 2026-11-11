@@ -1,4 +1,4 @@
-import { html, useState, useMemo, useEffect, useLoad, Loading, Modal, toast, useBusy, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useMemo, useLoad, Loading, Modal, toast, useBusy, ConfirmAction, deferDelete, usePendingDeletes, useLinkTab } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { personName, sortPeople, availabilityRules, dutyStats, dutyRound, owedTone } from "../lib/accounting.js";
@@ -13,14 +13,7 @@ export function DutiesPage() {
   const app = useApp();
   const manager = app.canManageDuties;
   const [span, setSpan] = useState(12);
-  // The tab can come from the link (#/duties?tab=rounds), e.g. from the tour.
-  const tabInLink = () => new URLSearchParams(location.hash.split("?")[1] || "").get("tab");
-  const [tab, setTab] = useState(() => tabInLink() || "schedule");
-  useEffect(() => {
-    const on = () => { const t = tabInLink(); if (t) setTab(t); };
-    window.addEventListener("hashchange", on);
-    return () => window.removeEventListener("hashchange", on);
-  }, []);
+  const [tab, setTab] = useLinkTab("schedule");
   const weeks = weeksFrom(span, addDays(mondayOf(), -7));
   const state = useLoad(async () => {
     const [people, duties, availability, freeWeeks] = await Promise.all([

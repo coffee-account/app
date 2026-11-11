@@ -22,7 +22,6 @@ import { InfoPage } from "./pages/info.js";
 import { EmailsPage } from "./pages/emails.js";
 import { RefundsPage } from "./pages/refunds.js";
 import { IssuesPage } from "./pages/issues.js";
-import { PaypalPage } from "./pages/paypal.js";
 import { Tour, tourParts, unseenParts } from "./lib/guide.js";
 
 // Grouped by task; the first group has no heading. Order within a group follows the usual workflow.
@@ -37,7 +36,6 @@ const ROUTES = [
   { path: "lists", title: "Print lists", page: ListsPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
   { path: "counting", title: "Counting", page: CountingPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "payments", title: "Payments", page: PaymentsPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
-  { path: "paypal", title: "PayPal import", page: PaypalPage, section: "ACCOUNTING", show: (a) => a.isAdmin },
   { path: "balances", title: "Balances", page: BalancesPage, section: "ACCOUNTING", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "people", title: "People", page: PeoplePage, section: "MANAGE", show: (a) => a.isAdmin || a.isGroupAdmin },
   { path: "accounts", title: (a) => (a.isAdmin ? "Accounts & roles" : "Accounts"), page: AccountsPage, section: "MANAGE", show: (a) => a.isAdmin || a.isGroupAdmin },
@@ -157,7 +155,9 @@ function SetPasswordScreen({ onDone }) {
 // ── Signed-in shell ──
 function Shell({ app }) {
   const at = useRoute();
-  const path = at;
+  const path = at === "paypal" ? "payments" : at;
+  // The PayPal import is a tab of Payments now: old links open that tab.
+  useEffect(() => { if (at === "paypal") location.replace("#/payments?tab=import"); }, [at]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [freshUpdates, setFreshUpdates] = useState(null); // new updates for people who skip the Info page
   const [tour, setTour] = useState(null); // tour parts to show, or null

@@ -17,8 +17,8 @@ export const ISSUE_CATEGORIES = [
 export const APP_BUG = ["app", "App issues and suggestions"];
 const LABEL = Object.fromEntries([...ISSUE_CATEGORIES, APP_BUG].map(([k, l]) => [k, l]));
 
-const PAGES = ["My account", "My availability", "Kitchen duty", "Invoices", "Report an issue", "Refunds", "Updates & guide",
-  "Balances", "Counting", "Payments", "PayPal import", "Print lists", "People", "Accounts & roles", "Settings", "Sign-in or registration", "E-mails"];
+const PAGES = ["My account", "My availability", "Duty schedule", "Invoices", "Report an issue", "Refunds", "Updates & guide",
+  "Balances", "Counting", "Payments", "PayPal import (Payments)", "Print lists", "People", "Accounts & roles", "Settings", "Sign-in or registration", "E-mails"];
 
 /** Browser, system and screen size, so an issue can be reproduced. */
 function environment() {

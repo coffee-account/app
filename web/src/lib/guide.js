@@ -31,7 +31,7 @@ const PARTS = {
   admin: () => [
     { path: "lists", title: "Print lists", text: "When a paper list is full, print new coffee and drinks lists here." },
     { path: "counting", title: "Counting", text: "Open a count for each collected list. Group admins then fill in their own groups; the list shows which groups are still missing." },
-    { path: "payments", title: "Payments", text: "Record payments by hand, or import them from a PayPal export under PayPal import." },
+    { path: "payments", tab: "import", title: "Payments", text: "Money in and Money out record payments and payouts by hand; PayPal import books both from a PayPal statement and updates the PayPal balance." },
     { path: "balances", title: "Balances", text: "See who is below the low-balance limit and remind them." },
     { path: "accounts", title: "Accounts & roles", text: "Connect new accounts and hand out rights: group admin, duty manager, invoices, resolving reports." },
     { path: "duties", tab: "schedule", title: "Duty schedule", text: "Assign weeks in the Schedule tab and manage who is in the Duty pool." },

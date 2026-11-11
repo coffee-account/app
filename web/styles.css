@@ -334,7 +334,10 @@ table.data.matrix { width: max-content; min-width: 100%; }
   .print-root .paper:last-child { page-break-after: auto; break-after: auto; }
 }
 .print-root { display: none; }
-.form-row { display: grid; grid-template-columns: minmax(200px, 2fr) repeat(3, minmax(120px, 1fr)) minmax(140px, 1.5fr) auto; gap: 12px; align-items: end; }
+/* Fields line up at the top, so a hint under one field (e.g. the current balance) doesn't push it up;
+   the button sits level with the input boxes (label line 18px + 6px gap). */
+.form-row { display: grid; grid-template-columns: minmax(200px, 2fr) repeat(3, minmax(120px, 1fr)) minmax(140px, 1.5fr) auto; gap: 12px; align-items: start; }
+.form-row > .btn { margin-top: 24px; }
 @media (max-width: 1100px) { .form-row { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); } }
 .upload input[type="file"] { position: absolute; width: 1px; height: 1px; opacity: 0; }
 .upload { position: relative; }
