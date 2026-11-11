@@ -70,7 +70,7 @@ function PaymentForm({ people, ledger, onSaved }) {
         </select><//>
       <${Field} label="Date"><input type="date" required value=${f.paid_on} onInput=${set("paid_on")} /><//>
       <${Field} label="Amount (€)"><input inputmode="decimal" required value=${f.amount} onInput=${set("amount")} /><//>
-      <${Field} label="Method"><input list="pay-methods" value=${f.method} onInput=${set("method")} />
+      <${Field} label="Method" hint=${/^paypal/i.test(f.method) ? "Also added to the PayPal balance." : null}><input list="pay-methods" value=${f.method} onInput=${set("method")} />
         <datalist id="pay-methods"><option value="PayPal" /><option value="Cash" /><option value="Bank transfer" /><option value="Correction" /></datalist><//>
       <${Field} label="Note"><input value=${f.note} onInput=${set("note")} /><//>
       <button class="btn primary" disabled=${busy}>Record payment</button>

@@ -1,4 +1,4 @@
-import { html, useState, useLoad, Loading, Modal, fmtEUR, useBusy, downloadBlob, loadExcelJS, usePersisted } from "../lib/ui.js";
+import { html, useState, useLoad, Loading, Modal, Field, toast, fmtEUR, useBusy, downloadBlob, loadExcelJS, usePersisted } from "../lib/ui.js";
 import { Figures } from "../lib/drawings.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
@@ -20,12 +20,13 @@ export function BalancesPage() {
   const group = app.isAdmin ? null : app.managedGroup;
   const state = useLoad(async () => {
     const [ledger, settings] = await Promise.all([api.loadLedgerData(undefined, group), app.isAdmin ? api.loadSettings() : {}]);
-    return { ...ledger, paypal: settings.paypal_balance || null }; // newest balance from an imported PayPal statement
+    return { ...ledger, paypal: settings.paypal_balance || null }; // PayPal balance: last import or set by hand, plus manual entries since
   });
   const [show, setShow] = usePersisted("balances.show", "active");
   const [sort, setSort] = usePersisted("balances.sort", ["balance", true]);
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState(null);
+  const [editPaypal, setEditPaypal] = useState(false);
   const [busy, run] = useBusy();
   const low = Number(app.settings.balance?.low_threshold ?? -10);
 
@@ -53,9 +54,15 @@ export function BalancesPage() {
       });
       const all = [...ledger.values()];
       const lowCount = all.filter((r) => r.balance < low && (r.person.active_coffee || r.person.active_drinks)).length;
+      // What everyone has topped up and not used yet (credit), less what people owe; compare with the PayPal balance.
+      const sum = (f) => Math.round(all.reduce((s, r) => s + f(r.balance), 0) * 100) / 100;
+      const credit = sum((b) => Math.max(b, 0));
+      const owed = sum((b) => Math.max(-b, 0));
       return html`
         <${Figures} items=${[
-          ...(app.isAdmin ? [paypalFigure(data.paypal)] : []),
+          ...(app.isAdmin ? [paypalFigure(data.paypal, true, () => setEditPaypal(true))] : []),
+          { label: group ? `Balances in ${group}` : "Members' balances", value: fmtEUR(credit - owed), tone: credit - owed < 0 ? "neg" : "",
+            sub: `${fmtEUR(credit)} topped up and unused · ${fmtEUR(owed)} owed` },
           { label: `Below ${fmtEUR(low)}`, value: lowCount, tone: lowCount ? "neg" : "", sub: "active people to remind" },
         ]} />
         <div class="toolbar">
@@ -78,6 +85,8 @@ export function BalancesPage() {
             <td class="num">${rows.reduce((n, r) => n + r.coffees, 0)}</td><td class="num">${rows.reduce((n, r) => n + r.drinks, 0)}</td>
             <td class="num">${fmtEUR(rows.reduce((n, r) => n + r.paid, 0))}</td><td class="num">${fmtEUR(rows.reduce((n, r) => n + r.balance, 0))}</td></tr></tfoot>
         </table></div>
+        ${editPaypal && html`<${PaypalBalanceModal} paypal=${data.paypal} onClose=${() => setEditPaypal(false)}
+          onSaved=${() => { setEditPaypal(false); state.reload(); }} />`}
         ${detail && html`<${DetailModal} row=${detail} label=${app.settings.balance?.starting_label} onClose=${() => setDetail(null)} />`}`;
     }}<//>`;
 }
@@ -98,13 +107,44 @@ function DetailModal({ row, label, onClose }) {
   <//>`;
 }
 
-/** Figure for the newest PayPal balance ({ amount, as_of } from settings, or null). */
-export function paypalFigure(paypal, linked = true) {
+/**
+ * Figure for the PayPal balance ({ amount, as_of, source?, adjusted_at? } from settings, or null): set by the
+ * last PayPal import or by hand, then kept up to date by PayPal payments and payouts recorded by hand.
+ */
+export function paypalFigure(paypal, linked = true, onEdit = null) {
   const imp = linked ? html`<a href="#/paypal">PayPal import</a>` : "PayPal import";
-  return paypal
-    ? { label: "PayPal balance", value: fmtEUR(paypal.amount), tone: paypal.amount < 0 ? "neg" : "",
-        sub: html`on ${fmtDate(paypal.as_of)}, from the last ${imp}` }
-    : { label: "PayPal balance", value: "—", sub: html`appears after the first ${imp}` };
+  const edit = onEdit && html` · <button class="btn-text" onClick=${onEdit}>Edit</button>`;
+  if (!paypal) return { label: "PayPal balance", value: "—", sub: html`appears after the first ${imp}${onEdit ? " or once you set it" : ""}${edit || ""}` };
+  const from = paypal.source === "manual" ? "set by hand" : html`from the last ${imp}`;
+  const since = paypal.adjusted_at && paypal.adjusted_at.slice(0, 10) >= paypal.as_of ? ", plus entries recorded since" : "";
+  return { label: "PayPal balance", value: fmtEUR(paypal.amount), tone: paypal.amount < 0 ? "neg" : "",
+    sub: html`on ${fmtDate(paypal.as_of)}, ${from}${since}${edit || ""}` };
+}
+
+/** Sets the PayPal balance by hand, e.g. after checking the account. */
+function PaypalBalanceModal({ paypal, onClose, onSaved }) {
+  const [amount, setAmount] = useState(paypal ? String(paypal.amount).replace(".", ",") : "");
+  const [asOf, setAsOf] = useState(isoDate());
+  const [busy, run] = useBusy();
+  const save = () => run(async () => {
+    const value = Number(String(amount).replace(",", "."));
+    if (!Number.isFinite(value) || amount.trim() === "") throw new Error("Enter the balance in euros");
+    await api.setPaypalBalance(Math.round(value * 100) / 100, asOf);
+    toast("PayPal balance saved");
+    onSaved();
+  });
+  return html`<${Modal} title="PayPal balance" onClose=${onClose}>
+    <p class="lede" style="margin:4px 0 14px">The balance as shown on paypal.com. PayPal payments and payouts you record by hand
+      keep it up to date from here on; the next PayPal import sets it from the statement again.</p>
+    <div class="form-grid">
+      <${Field} label="Balance (€)"><input inputmode="decimal" value=${amount} onInput=${(e) => setAmount(e.target.value)} /><//>
+      <${Field} label="As of"><input type="date" value=${asOf} onInput=${(e) => setAsOf(e.target.value)} /><//>
+    </div>
+    <div class="row end" style="margin-top:16px;gap:16px">
+      <button class="btn-text" onClick=${onClose}>Cancel</button>
+      <button class="btn primary" disabled=${busy} onClick=${save}>Save</button>
+    </div>
+  <//>`;
 }
 
 export function exportCsv(data) {

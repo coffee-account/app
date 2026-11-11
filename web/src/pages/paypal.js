@@ -1,7 +1,7 @@
-import { html, useState, useMemo, useLoad, Loading, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useMemo, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
 import * as api from "../lib/api.js";
 import { personName, sortPeople, dutyRound } from "../lib/accounting.js";
-import { fmtDate } from "../lib/dates.js";
+import { fmtDate, isoDate } from "../lib/dates.js";
 import { readStatement, matchPayer, normName } from "../lib/paypal.js";
 import { Figures, EmptyState, ReceiptCarrier } from "../lib/drawings.js";
 
@@ -182,11 +182,12 @@ function Payouts({ data, reload }) {
   const person = new Map(data.people.map((p) => [p.id, p]));
   const invoice = new Map(data.invoices.map((i) => [i.id, i]));
   const forget = (p) => deferDelete({ key: `payout:${p.id}`, message: "Payout removed from the list", commit: () => api.deletePayout(p.id), onDone: reload });
-  if (!list.length) return null;
   return html`<section style="margin-top:36px">
     <h2>Recorded payouts</h2>
-    <p class="lede" style="margin-bottom:12px">Removing a payout here doesn't change the invoice status or a member's balance; correct those on their own pages.</p>
-    <div class="table-wrap"><table class="data">
+    <p class="lede" style="margin-bottom:12px">Payouts recorded by hand come off the PayPal balance; removing one adds it back.
+      Removing a payout doesn't change the invoice status or a member's balance; correct those on their own pages.</p>
+    <${ManualPayout} reload=${reload} />
+    ${list.length > 0 && html`<div class="table-wrap"><table class="data">
       <thead><tr><th>Date</th><th>To</th><th>What</th><th class="num">Amount</th><th></th></tr></thead>
       <tbody>${list.slice(0, 200).map((p) => html`<tr key=${p.id}>
         <td>${fmtDate(p.paid_on)}</td><td>${p.recipient || "—"}</td>
@@ -195,8 +196,37 @@ function Payouts({ data, reload }) {
         <td class="num">${fmtEUR(p.amount)}</td>
         <td class="num"><span class="row-actions"><${ConfirmAction} label="Remove" question="Remove this payout from the list?" actions=${[{ label: "Remove", danger: true, onClick: () => forget(p) }]} /></span></td>
       </tr>`)}</tbody>
-    </table></div>
+    </table></div>`}
   </section>`;
+}
+
+/** A payout made from the PayPal account outside an import, e.g. a purchase. Invoices and refunds are marked paid on their own pages. */
+function ManualPayout({ reload }) {
+  const empty = { paid_on: isoDate(), amount: "", recipient: "", kind: "purchase", note: "" };
+  const [f, setF] = useState(empty);
+  const [busy, run] = useBusy();
+  const set = (k) => (e) => { const v = e.target.value; setF((x) => ({ ...x, [k]: v })); };
+  return html`<form class="card payment-form" onSubmit=${(e) => {
+    e.preventDefault();
+    run(async () => {
+      const amount = Math.round(Number(String(f.amount).replace(",", ".")) * 100) / 100;
+      if (!(amount > 0)) throw new Error("Enter the amount paid out");
+      await api.addPayout({ ...f, amount, recipient: f.recipient || null, note: f.note || null });
+      toast(`Payout of ${fmtEUR(amount)} recorded and taken off the PayPal balance`);
+      setF({ ...empty, paid_on: f.paid_on });
+      reload();
+    });
+  }}>
+    <div class="form-row">
+      <${Field} label="Date"><input type="date" required value=${f.paid_on} onInput=${set("paid_on")} /><//>
+      <${Field} label="Amount (€)"><input inputmode="decimal" required value=${f.amount} onInput=${set("amount")} /><//>
+      <${Field} label="To"><input value=${f.recipient} onInput=${set("recipient")} /><//>
+      <${Field} label="What"><select value=${f.kind} onChange=${set("kind")}>
+        <option value="purchase">${PAYOUT_LABEL.purchase}</option><option value="other">${PAYOUT_LABEL.other}</option></select><//>
+      <${Field} label="Note"><input value=${f.note} onInput=${set("note")} /><//>
+      <button class="btn primary" disabled=${busy}>Record payout</button>
+    </div>
+  </form>`;
 }
 
 function Review({ statement, data, onDone, onClear }) {

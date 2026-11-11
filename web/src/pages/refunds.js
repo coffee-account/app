@@ -142,12 +142,16 @@ function PayForm({ r, onDone, onCancel }) {
   const app = useApp();
   const [date, setDate] = useState(isoDate());
   const [note, setNote] = useState("");
+  const [viaPaypal, setViaPaypal] = useState(r.method === "PayPal" && Number(r.amount) > 0);
   const [busy, run] = useBusy();
   return html`<div class="row" style="gap:8px;flex-wrap:nowrap">
     <input type="date" aria-label="Paid on" value=${date} onInput=${(e) => setDate(e.target.value)} style="width:150px" />
     <input placeholder="Note" aria-label="Note" value=${note} onInput=${(e) => setNote(e.target.value)} style="width:140px" />
+    ${Number(r.amount) > 0 && html`<label class="check" style="white-space:nowrap" title="Recorded as a payout and taken off the PayPal balance">
+      <input type="checkbox" checked=${viaPaypal} onChange=${(e) => setViaPaypal(e.target.checked)} /> From PayPal</label>`}
     <button class="btn small primary" disabled=${busy} onClick=${() => run(async () => {
       await api.completeRefund(r.id, date, note);
+      if (viaPaypal) await api.addPayout({ kind: "refund", person_id: r.person_id, paid_on: date, amount: Number(r.amount), recipient: r.details || null, note: note || "Refund" });
       toast(`${fmtEUR(r.amount)} recorded as paid out${r.successor_profile_id ? "; admin role handed over" : ""}`);
       onDone();
       if (r.successor_profile_id || r.profile_id === app.user.id) app.refresh(); // roles or own balance changed

@@ -15,7 +15,7 @@ export function InvoicesPage() {
   const [scope, setScope] = useState(app.isAdmin ? "all" : "mine");
   const state = useLoad(() => api.listInvoices(scope === "mine", app.user.id), [scope]);
   const to = app.settings.reimbursement?.to;
-  // What's in the PayPal account that invoices are paid from (from the last statement import).
+  // What's in the PayPal account that invoices are paid from (last import or set by hand, plus manual entries since).
   const paypal = useLoad(async () => (await api.loadSettings()).paypal_balance || null);
 
   return html`
@@ -29,7 +29,7 @@ export function InvoicesPage() {
         <button class=${scope === "all" ? "on" : ""} aria-pressed=${scope === "all"} onClick=${() => setScope("all")}>All</button>
         <button class=${scope === "mine" ? "on" : ""} aria-pressed=${scope === "mine"} onClick=${() => setScope("mine")}>Mine</button></div>`}
     </div>
-    <${Loading} state=${state}>${(rows) => html`<${InvoiceTable} rows=${rows} admin=${app.isAdmin} reload=${state.reload} />`}<//>`;
+    <${Loading} state=${state}>${(rows) => html`<${InvoiceTable} rows=${rows} admin=${app.isAdmin} reload=${() => { state.reload(); paypal.reload(); }} />`}<//>`;
 }
 
 function SubmitForm({ app, onDone }) {
@@ -104,9 +104,13 @@ function InvoiceTable({ rows: all, admin, reload }) {
     return html`<${EmptyState} drawing=${html`<${ReceiptCarrier} />`}>No invoices yet. Receipts you upload above will be listed here with their status.<//>`;
   }
   const open = (inv) => run(async () => window.open(await api.invoiceFileUrl(inv.file_path), "_blank", "noopener"));
-  const setStatus = (inv, status) => run(async () => {
+  const setStatus = (inv, status, viaPaypal = false) => run(async () => {
     const status_note = status === "rejected" ? prompt("Reason (optional)") ?? "" : inv.status_note;
     await api.updateInvoice(inv.id, { status, status_note });
+    // Paid from the PayPal account: recorded as a payout, which takes it off the PayPal balance.
+    if (viaPaypal) await api.addPayout({ kind: "invoice", invoice_id: inv.id, paid_on: isoDate(), amount: Number(inv.amount), recipient: inv.submitter_name || null, note: "Marked reimbursed" });
+    // Reopening undoes a payout recorded by hand for it (and gives the amount back to the PayPal balance).
+    if (inv.status === "reimbursed" && status !== "reimbursed") await api.deleteManualInvoicePayouts(inv.id);
     reload();
   });
   const resend = (inv) => run(async () => { await api.resendInvoice(inv.id); toast("E-mail sent"); reload(); });
@@ -129,7 +133,8 @@ function InvoiceTable({ rows: all, admin, reload }) {
       <td class="num"><div class="row end" style="gap:12px">
         ${inv.file_path && html`<button class="btn-text" disabled=${busy} onClick=${() => open(inv)}>File</button>`}
         ${(admin || inv.notify_error) && html`<button class="btn-text" disabled=${busy} onClick=${() => resend(inv)}>Resend</button>`}
-        ${admin && inv.status !== "reimbursed" && html`<button class="btn small" disabled=${busy} onClick=${() => setStatus(inv, "reimbursed")}>Mark reimbursed</button>`}
+        ${admin && inv.status !== "reimbursed" && html`<${ConfirmAction} label="Mark reimbursed" question=${`How was ${fmtEUR(inv.amount)} paid?`} disabled=${busy}
+          actions=${[{ label: "From PayPal", onClick: () => setStatus(inv, "reimbursed", true) }, { label: "Another way", onClick: () => setStatus(inv, "reimbursed") }]} />`}
         ${admin && inv.status === "submitted" && html`<button class="btn-text" disabled=${busy} onClick=${() => setStatus(inv, "rejected")}>Reject</button>`}
         ${admin && inv.status !== "submitted" && html`<button class="btn-text" disabled=${busy} onClick=${() => setStatus(inv, "submitted")}>Reopen</button>`}
         ${(admin || inv.status === "submitted") && html`<${ConfirmAction} question="Delete invoice and file?" disabled=${busy} onConfirm=${() => remove(inv)} />`}

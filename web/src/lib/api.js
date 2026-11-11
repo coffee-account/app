@@ -346,6 +346,11 @@ export async function importPaypal({ payments, aliases, ignored }) {
 // ── Payouts (money sent from the PayPal account) ──
 export const listPayouts = () => q(sb.from("payouts").select("*").order("paid_on", { ascending: false }));
 export const deletePayout = (id) => q(sb.from("payouts").delete().eq("id", id));
+// Payouts recorded by hand have no PayPal transaction ID; the database takes them off the PayPal balance.
+export const addPayout = (row) => q(sb.from("payouts").insert({ ...row, external_id: null }));
+export const deleteManualInvoicePayouts = (invoice_id) => q(sb.from("payouts").delete().eq("invoice_id", invoice_id).is("external_id", null));
+/** Sets the PayPal balance by hand; later manual PayPal payments and payouts keep adjusting it. */
+export const setPaypalBalance = (amount, as_of) => saveSetting("paypal_balance", { amount, as_of, source: "manual" });
 
 /**
  * Records payouts from a PayPal statement.
