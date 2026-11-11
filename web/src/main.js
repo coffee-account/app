@@ -63,13 +63,24 @@ function useRoute() {
 }
 
 // ── Auth screens ──
+// Group names compared loosely ("group a", "Group-A"), as the database does when someone signs up.
+const groupKey = (s) => String(s || "").toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+const NEW_GROUP = "__new__";
 function AuthScreen({ settings, groups, initialMode = "signin" }) {
   const [mode, setMode] = useState(initialMode);
-  const [form, setForm] = useState({ email: "", password: "", first_name: "", last_name: "", group: "" });
+  const [form, setForm] = useState({ email: "", password: "", first_name: "", last_name: "", group: "", new_group: "" });
+  const [newGroupOk, setNewGroupOk] = useState(""); // a new group name they confirmed despite a similar one
   const [done, setDone] = useState(null);
   const [busy, run] = useBusy();
   const set = (k) => (e) => { const v = e.target.value; setForm((f) => ({ ...f, [k]: v })); };
   const domains = settings.signup_domains || [];
+  // A new group: point out an existing one that looks the same or contains the other, before creating it.
+  const creating = form.group === NEW_GROUP;
+  const typed = form.new_group.trim();
+  const same = creating && typed && groups.find((g) => groupKey(g.name) === groupKey(typed));
+  const similar = creating && typed && !same && groupKey(typed).length >= 3 && newGroupOk !== typed
+    && groups.find((g) => groupKey(g.name).includes(groupKey(typed)) || groupKey(typed).includes(groupKey(g.name)));
+  const useGroup = (name) => setForm((f) => ({ ...f, group: name, new_group: "" }));
   const appName = settings.app_name || "Coffee & Drinks";
 
   const submit = (e) => {
@@ -83,8 +94,10 @@ function AuthScreen({ settings, groups, initialMode = "signin" }) {
           throw new Error(`Please register with an address from: ${domains.join(", ")}`);
         }
         if (form.password.length < 8) throw new Error("Use at least 8 characters for the password.");
+        if (creating && !typed) throw new Error("Type the name of your new group, or choose one from the list.");
+        if (same || similar) throw new Error("Please check the group first: is it one that already exists?");
         const res = await api.auth.signUp(form.email.trim(), form.password, {
-          first_name: form.first_name.trim(), last_name: form.last_name.trim(), group: form.group,
+          first_name: form.first_name.trim(), last_name: form.last_name.trim(), group: creating ? typed : form.group,
         });
         if (!res.session) setDone("Check your inbox and click the confirmation link, then sign in.");
       } else {
@@ -125,7 +138,17 @@ function AuthScreen({ settings, groups, initialMode = "signin" }) {
           <select value=${form.group} onChange=${set("group")}>
             <option value="">— choose —</option>
             ${groups.map((g) => html`<option value=${g.name}>${g.name}</option>`)}
-          </select><//>`}
+            <option value=${NEW_GROUP}>My group isn't listed: add it…</option>
+          </select><//>
+        ${creating && html`<${Field} label="New group" hint="Use the name everyone uses for it, e.g. the lab or working group.">
+          <input required maxlength="60" value=${form.new_group} onInput=${set("new_group")} /><//>`}
+        ${same && html`<div class="notice warn" style="margin:0">${`"${same.name}" already exists.`}
+          <div class="row" style="margin-top:8px"><button type="button" class="btn small" onClick=${() => useGroup(same.name)}>${`Join ${same.name}`}</button></div></div>`}
+        ${similar && html`<div class="notice warn" style="margin:0">${`There is already a group called "${similar.name}". Is that yours?`}
+          <div class="row" style="margin-top:8px;gap:12px">
+            <button type="button" class="btn small" onClick=${() => useGroup(similar.name)}>${`Yes, join ${similar.name}`}</button>
+            <button type="button" class="btn-text" onClick=${() => setNewGroupOk(typed)}>No, mine is a new group</button>
+          </div></div>`}`}
       <${Field} label="E-mail" hint=${mode === "register" && domains.length ? `Allowed: ${domains.join(", ")}` : null}>
         <input type="email" required value=${form.email} onInput=${set("email")} autocomplete="email" /><//>
       ${mode !== "reset" && html`<${Field} label="Password">

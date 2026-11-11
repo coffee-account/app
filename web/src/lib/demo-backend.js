@@ -258,8 +258,15 @@ export function createDemoClient(notify) {
         return { data: { session: store.db.session }, error: null };
       },
       async signUp({ email, options }) {
-        const meta = options?.data || {};
+        const meta = { ...(options?.data || {}) };
         const db = store.db;
+        // As the database: a group that looks like an existing one joins it, otherwise a new group is added.
+        if (meta.group) {
+          const key = (s) => String(s).toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
+          const hit = db.groups.find((g) => key(g.name) === key(meta.group));
+          if (hit) meta.group = hit.name;
+          else db.groups.push({ name: meta.group.trim(), sort_order: Math.max(0, ...db.groups.map((g) => g.sort_order || 0)) + 1 });
+        }
         if (db.users.some((u) => u.email.toLowerCase() === email.toLowerCase())) return { data: null, error: { message: "User already registered" } };
         const user = { id: uuid(), email };
         db.users.push(user);
