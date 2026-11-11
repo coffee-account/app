@@ -91,7 +91,7 @@ function AuthScreen({ settings, groups, initialMode = "signin" }) {
       } else if (mode === "register") {
         const dom = form.email.split("@")[1]?.toLowerCase() || "";
         if (domains.length && !domains.some((d) => dom === d.toLowerCase() || dom.endsWith(`.${d.toLowerCase()}`))) {
-          throw new Error(`Please register with an address from: ${domains.join(", ")}`);
+          throw new Error(`Please register with an address from: ${domains.join(", ")} (sub-domains included)`);
         }
         if (form.password.length < 8) throw new Error("Use at least 8 characters for the password.");
         if (creating && !typed) throw new Error("Type the name of your new group, or choose one from the list.");
@@ -149,7 +149,7 @@ function AuthScreen({ settings, groups, initialMode = "signin" }) {
             <button type="button" class="btn small" onClick=${() => useGroup(similar.name)}>${`Yes, join ${similar.name}`}</button>
             <button type="button" class="btn-text" onClick=${() => setNewGroupOk(typed)}>No, mine is a new group</button>
           </div></div>`}`}
-      <${Field} label="E-mail" hint=${mode === "register" && domains.length ? `Allowed: ${domains.join(", ")}` : null}>
+      <${Field} label="E-mail" hint=${mode === "register" && domains.length ? `Allowed: ${domains.join(", ")} (sub-domains included)` : null}>
         <input type="email" required value=${form.email} onInput=${set("email")} autocomplete="email" /><//>
       ${mode !== "reset" && html`<${Field} label="Password">
         <input type="password" required minlength=${mode === "register" ? 8 : undefined} value=${form.password} onInput=${set("password")}
