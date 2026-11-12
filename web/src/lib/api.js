@@ -158,6 +158,8 @@ export const listAvailability = (from, to, personId) => {
   return q(query);
 };
 export const saveAvailability = (rows) => q(sb.from("availability").upsert(rows, { onConflict: "person_id,week_start" }));
+export const clearAvailability = (person_id, weeks) => (weeks.length
+  ? q(sb.from("availability").delete().eq("person_id", person_id).in("week_start", weeks)) : Promise.resolve());
 
 export const listDuties = (from, to) =>
   q(sb.from("duty_assignments").select("*").gte("week_start", from).lte("week_start", to).order("week_start"));
@@ -169,9 +171,10 @@ export const setDutyTarget = (person, target) => q(sb.rpc("set_duty_target", { p
 export const setDutyPool = (person, in_pool) => q(sb.rpc("set_duty_pool", { person, in_pool }));
 export const clearDutyFree = (week_start) => q(sb.from("duty_free_weeks").delete().eq("week_start", week_start));
 
-/** Assigns several people to a week at once, then e-mails them together, so each e-mail names the others. */
-export async function assignDuty(week_start, person_ids, note) {
+/** Assigns several people to a week at once, then e-mails them together, so each e-mail names the others. `quietly`: no e-mail. */
+export async function assignDuty(week_start, person_ids, note, { quietly = false } = {}) {
   const rows = await q(sb.from("duty_assignments").insert(person_ids.map((person_id) => ({ week_start, person_id, note: note || null }))).select());
+  if (quietly) return { rows, mailErrors: [] };
   const res = await sb.functions.invoke("notify", { body: { type: "duty_assigned", assignment_ids: rows.map((r) => r.id) } });
   if (res.error) {
     const error = await errorMessage(res.error);
@@ -240,8 +243,8 @@ export const deleteTemplate = (id) => q(sb.from("list_templates").delete().eq("i
 export const importWorkbook = (payload) => q(sb.rpc("import_workbook", { payload }));
 
 /**
- * Applies a kitchen-duty sheet import (built on the Import page). Safe to repeat: assignments and
- * no-duty weeks are only added, availability answers given in the app are kept when keepAnswers is set.
+ * Applies a kitchen-duty sheet import (built on the Import page, which passes only what differs from the app).
+ * Safe to repeat: assignments and no-duty weeks are only added; with keepAnswers, existing availability answers are kept.
  * plan: { groups: [name], create: [{ key, person, history }], update: [{ id, patch, history }], freeWeeks, round }
  * history: { done: [week], scheduled: [week], answers: [{ week, status }] }
  */
@@ -253,7 +256,7 @@ export async function importDutySheet(plan, { keepAnswers = true } = {}) {
     withIds.push({ id: row.id, history: c.history });
   }
   for (const u of plan.update) {
-    await q(sb.from("people").update(u.patch).eq("id", u.id));
+    if (Object.keys(u.patch).length) await q(sb.from("people").update(u.patch).eq("id", u.id));
     withIds.push(u);
   }
   const duties = withIds.flatMap(({ id, history }) => [...history.done, ...history.scheduled].map((week_start) => ({ week_start, person_id: id })));
@@ -274,8 +277,9 @@ export async function invitePerson(person_id) {
   const res = await sb.functions.invoke("notify", { body: { type: "invite", person_id } });
   if (res.error) throw new Error(await errorMessage(res.error));
 }
-export async function sendWeeklyReminders() {
-  const res = await sb.functions.invoke("notify", { body: { type: "weekly" } });
+/** Availability reminders to the people a duty manager picked; returns { sent, skipped: [{ person_id, reason }] }. */
+export async function sendAvailabilityReminders(person_ids) {
+  const res = await sb.functions.invoke("notify", { body: { type: "availability_reminder", person_ids } });
   if (res.error) throw new Error(await errorMessage(res.error));
   return res.data;
 }

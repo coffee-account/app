@@ -20,6 +20,7 @@ export function AccountsPage() {
     };
   });
   const [busy, run] = useBusy();
+  const [q, setQ] = useState("");
   const done = async (p, msg) => {
     toast(msg || "Saved");
     await state.reload();
@@ -37,7 +38,27 @@ export function AccountsPage() {
       const byId = new Map(people.map((p) => [p.id, p]));
       const linked = new Set(profiles.map((p) => p.person_id).filter(Boolean));
       const free = sortPeople(people.filter((p) => !linked.has(p.id)), "last");
-      const pending = profiles.filter((p) => !p.person_id);
+      // Search by e-mail, name or group; accounts are grouped by group (A–Z), then by last name.
+      const fold = (x) => String(x || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      const groupOf = (p) => (p.person_id ? byId.get(p.person_id)?.group_name : null) ?? p.group_name ?? "";
+      const lastOf = (p) => (p.person_id && byId.get(p.person_id)?.last_name) || p.last_name || p.email;
+      const firstOf = (p) => (p.person_id && byId.get(p.person_id)?.first_name) || p.first_name || "";
+      const words = fold(q).split(/\s+/).filter(Boolean);
+      const text = (p) => fold(`${p.email} ${firstOf(p)} ${lastOf(p)} ${p.first_name || ""} ${p.last_name || ""} ${groupOf(p)} ${ROLE_LABEL[p.role]}`);
+      // The whole search as typed ("group c") wins over its words found anywhere.
+      const phrase = words.join(" ");
+      const byPhrase = words.length > 1 && profiles.some((p) => text(p).includes(phrase));
+      const hit = (p) => !words.length || (byPhrase ? text(p).includes(phrase) : words.every((w) => text(p).includes(w)));
+      const shown = profiles.filter(hit).sort((a, b) => (groupOf(a) ? 0 : 1) - (groupOf(b) ? 0 : 1)
+        || groupOf(a).localeCompare(groupOf(b), "de") || fold(lastOf(a)).localeCompare(fold(lastOf(b))) || fold(firstOf(a)).localeCompare(fold(firstOf(b))));
+      const sections = [];
+      for (const p of shown) {
+        const g = groupOf(p) || "No group";
+        if (sections[sections.length - 1]?.group !== g) sections.push({ group: g, rows: [] });
+        sections[sections.length - 1].rows.push(p);
+      }
+      const cols = group ? 3 : 6;
+      const pending = shown.filter((p) => !p.person_id);
       return html`<div>
         ${pending.length > 0 && html`<div class="card">
           <h2>Waiting to be connected (${pending.length})</h2>
@@ -55,13 +76,19 @@ export function AccountsPage() {
                 </div></td></tr>`;
             })}</tbody>
           </table></div></div>`}
+        <div class="toolbar">
+          <input data-search placeholder="Search name, e-mail or group  /" aria-label="Search accounts" value=${q} onInput=${(e) => setQ(e.target.value)} />
+          <span class="count">${shown.length === profiles.length ? `${profiles.length} accounts` : `${shown.length} of ${profiles.length} accounts`} · ${sections.length} group${sections.length === 1 ? "" : "s"}</span>
+        </div>
         <div class="table-wrap"><table class="data">
           <thead><tr><th>Account</th><th>Person</th><th>Role</th>
             ${!group && html`<th class="center">Upload invoices</th><th class="center">Manage kitchen duty</th><th class="center">Resolve reports</th>`}</tr></thead>
-          <tbody>${profiles.map((p) => {
+          <tbody>${shown.length === 0 && html`<tr><td colspan=${cols} class="muted">No account matches “${q}”.</td></tr>`}
+          ${sections.map(({ group: g, rows }) => [html`<tr class="group-row" key=${`g:${g}`}><td colspan=${cols}>${g} · ${rows.length}</td></tr>`, ...rows.map((p) => {
             const person = p.person_id && byId.get(p.person_id);
             return html`<tr key=${p.id}>
-              <td>${p.email}${p.id === app.user.id && html` <span class="badge accent">you</span>`}</td>
+              <td>${p.email}${p.id === app.user.id && html` <span class="badge accent">you</span>`}
+                ${!person && (p.first_name || p.last_name) && html`<div class="small muted">registered as ${p.first_name} ${p.last_name}</div>`}</td>
               <td>${person ? html`${personName(person)} <${ConfirmAction} label="Disconnect" question="Disconnect account?" disabled=${busy} onConfirm=${() => disconnect(p)} />`
                 : p.person_id ? html`<span class="muted">another group</span>`
                 : html`<${PersonSelect} free=${free} onPick=${(id) => connect(p, id)} />`}</td>
@@ -72,7 +99,7 @@ export function AccountsPage() {
                   html`<td class="center">${p.role === "admin" ? html`<span class="badge ok">always</span>`
                     : html`<input type="checkbox" aria-label=${label} checked=${!!p[k]} disabled=${busy} onChange=${(e) => update(p, { [k]: e.target.checked })} />`}</td>`)}`}
             </tr>`;
-          })}</tbody>
+          })])}</tbody>
         </table></div>
         ${!group && html`<p class="small muted" style="margin-top:10px">
           Group admins manage the people, account connections, balances, payments and counts of their own group, and see admin messages. They can't change settings, roles or anything outside their group.

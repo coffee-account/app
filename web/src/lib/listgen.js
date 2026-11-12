@@ -4,7 +4,7 @@ import { sortPeople } from "./accounting.js";
 import { isoWeek, isoDate, mondayOf, parseDate } from "./dates.js";
 
 export const PAGE = { portrait: [210, 297], landscape: [297, 210] }; // mm
-export const PRINT_FONTS = { title: "Fraunces", text: "Newsreader", data: "Schibsted Grotesk" };
+export const PRINT_FONTS = { title: "Arial", text: "Arial", data: "Arial" }; // the lists use Arial throughout
 
 const PAYPAL_ADDRESS = "ecker@cs.uni-goettingen.de";
 const LINK_BLUE = "#1f4e79"; // the blue swatch in the text editor
@@ -35,7 +35,6 @@ export function defaultConfig(kind) {
     rowHeight: 7, // the guide asks for writing fields of at least 7 mm
     headerTint: 10, // % grey of the table header row
     fiveLines: true, // heavier line after every fifth person, so people stay in their row
-    wordArial: false, // use Arial in the Word file instead of the Playfulcrema fonts
     cellSizes: {}, // "personId:columnKey" → font size (pt) of that one box, set by clicking it in the preview
     sortBy: "group",
     showGroup: true,
@@ -277,7 +276,7 @@ export async function exportDocx(kind, cfg, cols, rows, date) {
   const [pw, ph] = PAGE.portrait; // docx swaps these itself for landscape
   // Border sizes are in eighths of a point: 0.5 pt grid, 1 pt every five rows, 1.5 pt under the header.
   const line = (eighths) => ({ style: d.BorderStyle.SINGLE, size: eighths, color: "000000" });
-  const font = cfg.wordArial ? { title: "Arial", text: "Arial", data: "Arial" } : PRINT_FONTS;
+  const font = PRINT_FONTS;
   const headFill = headerTintColor(cfg).slice(1).toUpperCase();
   const shade = shadeColor(cfg).slice(1).toUpperCase();
   const align = { left: d.AlignmentType.LEFT, center: d.AlignmentType.CENTER, right: d.AlignmentType.RIGHT };

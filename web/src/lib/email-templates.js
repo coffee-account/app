@@ -37,7 +37,7 @@ On duty with you: {others_on_duty}.
 What to do during your week: [Kitchen duties](${DUTY_LINK})`,
   },
   {
-    key: "availability_reminder", editor: "duty", label: "Availability reminder", to: "People whose answered weeks are running out, Monday morning",
+    key: "availability_reminder", editor: "duty", label: "Availability reminder", to: "The people a duty manager picks (Kitchen duty → Availability reminders)",
     vars: { first_name: "Ada", weeks: "- week 47 (17 Nov – 23 Nov)\n- week 48 (24 Nov – 30 Nov)", count: "2", weeks_ahead: "6", app_url: "https://example.org/" },
     subject: "Reminder: please fill in your kitchen-duty availability",
     body: `Hi {first_name},

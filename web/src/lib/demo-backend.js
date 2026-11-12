@@ -15,7 +15,7 @@ const DEFAULT_SETTINGS = {
   app_name: "Coffee & Drinks",
   signup_domains: [],
   reimbursement: { to: "finance@example.org", cc_submitter: true },
-  availability: { weeks_ahead: 6, min_weeks: 3, required_for: "active", reminders: true },
+  availability: { weeks_ahead: 6, min_weeks: 3, required_for: "active" },
   duty: { people_per_week: 2, info: "Empty the dishwasher, wipe the counters, refill milk and coffee beans.", reminders: true, round: 3 },
   balance: { low_threshold: -10, starting_label: "Starting balance 19.1.2026" },
   payment_info: "Transfer to the PayPal account coffee@example.org and tell the accounting manager.",
@@ -325,7 +325,12 @@ export function createDemoClient(notify) {
         } else if (body.type === "invite") {
           msg = `Demo: invitation e-mail would be sent to ${who(body.person_id)?.email}`;
         } else if (body.type === "weekly") {
-          msg = "Demo: weekly availability and duty reminders would be sent now";
+          msg = "Demo: this week's duty reminders would be sent now";
+        } else if (body.type === "availability_reminder") {
+          const names = body.person_ids.map((id) => who(id)?.first_name).filter(Boolean);
+          store.save();
+          notify(`Demo e-mail → ${names.join(", ")}: availability reminder`);
+          return { data: { sent: names.length, skipped: [] }, error: null };
         } else if (body.type === "refund_requested") {
           const r = db.refund_requests.find((x) => x.id === body.request_id);
           if (r) r.notified_at = new Date().toISOString();

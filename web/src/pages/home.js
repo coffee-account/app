@@ -1,9 +1,12 @@
 import { html, useLoad, Loading, fmtEUR } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
-import { computeLedger } from "../lib/accounting.js";
-import { fmtDate, isoDate, mondayOf, addDays, weekLabel } from "../lib/dates.js";
-import { Figures, DictEntry, EmptyState, LayeredCup, WeekCalendar } from "../lib/drawings.js";
+import { computeLedger, availabilityRules } from "../lib/accounting.js";
+import { fmtDate, isoDate, mondayOf, addDays, weekLabel, weeksFrom } from "../lib/dates.js";
+import { Figures, DictEntry, EmptyState, LayeredCup, StatusCup } from "../lib/drawings.js";
+import { STATUS } from "./availability.js";
+
+const statusLabel = Object.fromEntries(STATUS);
 import { GettingStarted } from "../lib/guide.js";
 
 const hello = () => {
@@ -19,8 +22,15 @@ export function HomePage() {
     if (!person) return null;
     const data = await api.loadLedgerData(person.id);
     const ledger = computeLedger(data).get(person.id);
-    const duties = (await api.listDuties(mondayOf(), addDays(isoDate(), 365))).filter((d) => d.person_id === person.id);
-    return { ledger, duties };
+    const { weeksAhead } = availabilityRules(settings);
+    const weeks = weeksFrom(Math.max(weeksAhead, 4));
+    const [allDuties, availability, free] = await Promise.all([
+      api.listDuties(mondayOf(), addDays(isoDate(), 365)),
+      api.listAvailability(weeks[0], weeks[weeks.length - 1], person.id),
+      api.listDutyFreeWeeks(),
+    ]);
+    const duties = allDuties.filter((d) => d.person_id === person.id);
+    return { ledger, duties, weeks, availability, free: new Map(free.map((f) => [f.week_start, f])) };
   }, [person?.id]);
 
   if (!person) {
@@ -40,7 +50,7 @@ export function HomePage() {
       <div><h1>${hello()}, ${person.first_name}.</h1><p class="lede">${lists}</p></div>
       <${DictEntry} word="mug·shot" pos="n.">The face you make when the pot is empty and it's your kitchen week.<//>
     </div>
-    <${Loading} state=${state}>${({ ledger, duties }) => html`
+    <${Loading} state=${state}>${({ ledger, duties, weeks, availability, free }) => html`
       <${GettingStarted} app=${app} ledger=${ledger} />
       ${ledger.balance < low && html`<div class="notice bad">Your balance is below ${fmtEUR(low)}. Please top it up${settings.payment_info ? " (see below)" : ""}.</div>`}
       <${Figures} items=${[
@@ -52,12 +62,7 @@ export function HomePage() {
       <div class="grid cols-2">
         <div>
           <h2>Kitchen duty</h2>
-          ${duties.length
-            ? html`<div class="table-wrap"><table class="data normal"><tbody>
-                ${duties.map((d) => html`<tr><td>${weekLabel(d.week_start)}</td><td class="muted">${d.note || ""}</td></tr>`)}
-              </tbody></table></div>`
-            : html`<${EmptyState} drawing=${html`<${WeekCalendar} size=${96} />`}
-                action=${html`<a class="btn" href="#/availability">Update availability</a>`}>No duty coming up.<//>`}
+          <${DutyWeeks} duties=${duties} weeks=${weeks} availability=${availability} free=${free} />
         </div>
         ${(settings.payment_info || settings.payment_qr) && html`<div><h2>How to pay</h2>
           <div class="card pay-card">
@@ -75,4 +80,37 @@ export function HomePage() {
             <td class="num ${tone(e.amount)}">${fmtEUR(e.amount)}</td></tr>`)}
         </tbody>
       </table></div>`}<//>`;
+}
+
+/** The coming weeks with what you answered and whether you're on duty; later duties are listed below them. */
+function DutyWeeks({ duties, weeks, availability, free }) {
+  const mine = new Map(availability.map((a) => [a.week_start, a]));
+  const onDuty = new Map(duties.map((d) => [d.week_start, d]));
+  const later = duties.filter((d) => !weeks.includes(d.week_start));
+  const unanswered = weeks.filter((w) => !free.has(w) && !mine.has(w)).length;
+  return html`<div>
+    <div class="table-wrap"><table class="data normal">
+      <thead><tr><th>Week</th><th>Your availability</th><th></th></tr></thead>
+      <tbody>
+        ${weeks.map((w) => {
+          const a = mine.get(w);
+          const d = onDuty.get(w);
+          return html`<tr class=${free.has(w) ? "inactive" : ""}>
+            <td style="white-space:nowrap">${weekLabel(w)}</td>
+            <td>${free.has(w) ? html`<span class="muted">No kitchen duty${free.get(w).note ? ` (${free.get(w).note})` : ""}</span>`
+              : html`<span class="avail-cell"><${StatusCup} state=${a?.status} label="" />${a ? statusLabel[a.status] : html`<span class="muted">not answered</span>`}</span>
+                ${a?.note && html`<div class="small muted">${a.note}</div>`}`}</td>
+            <td class="num">${d && html`<span class="badge ok" title=${d.note || ""}>on duty</span>`}</td>
+          </tr>`;
+        })}
+        ${later.map((d) => html`<tr><td style="white-space:nowrap">${weekLabel(d.week_start)}</td><td class="muted">${d.note || ""}</td>
+          <td class="num"><span class="badge ok">on duty</span></td></tr>`)}
+      </tbody>
+    </table></div>
+    <div class="row" style="margin-top:10px">
+      ${unanswered > 0 && html`<span class="small muted">${unanswered} week${unanswered > 1 ? "s" : ""} not answered yet</span>`}
+      <span class="spacer"></span>
+      <a class="btn small" href="#/availability">Update availability</a>
+    </div>
+  </div>`;
 }

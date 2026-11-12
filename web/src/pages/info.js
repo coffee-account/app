@@ -1,4 +1,4 @@
-import { html, useState, useEffect, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes } from "../lib/ui.js";
+import { html, useState, useEffect, useRef, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes, LinkInserter } from "../lib/ui.js";
 import { useApp } from "../lib/context.js";
 import * as api from "../lib/api.js";
 import { markdown } from "../lib/markdown.js";
@@ -105,6 +105,7 @@ function InfoBlock({ title, note, settingKey, text, fallback, vars, editable, re
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [busy, run] = useBusy();
+  const textRef = useRef(null);
   const current = text || fallback;
   const save = (value) => run(async () => {
     await api.saveSetting(settingKey, value);
@@ -118,8 +119,10 @@ function InfoBlock({ title, note, settingKey, text, fallback, vars, editable, re
     </div>
     ${note && html`<p class="lede" style="margin-bottom:8px">${note}</p>`}
     ${editing ? html`<div class="info-editor">
-        <${Field} label="Text" hint="Placeholders: {coffee_price}, {drinks_price}, {low_threshold}, {weeks_ahead}, {app_url}. '## ' starts a section.">
-          <textarea rows="22" value=${draft} onInput=${(e) => setDraft(e.target.value)}></textarea><//>
+        <div class="field"><span>Text</span>
+          <${LinkInserter} textarea=${textRef} onInsert=${setDraft} />
+          <textarea ref=${textRef} rows="22" aria-label="Text" value=${draft} onInput=${(e) => setDraft(e.target.value)}></textarea>
+          <small class="muted">Placeholders: {coffee_price}, {drinks_price}, {low_threshold}, {weeks_ahead}, {app_url}. '## ' starts a section. Links: [text](https://…) or [text](mailto:name@example.org).</small></div>
         <div class="prose preview" dangerouslySetInnerHTML=${{ __html: markdown(draft, vars) }}></div>
         <div class="row" style="grid-column:1/-1">
           <span class="spacer"></span>

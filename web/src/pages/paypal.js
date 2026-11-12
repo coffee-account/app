@@ -244,13 +244,16 @@ function Review({ statement, data, onDone, onClear }) {
   const ignored = useMemo(() => new Set(data.ignored.map((x) => x.external_id)), [data.ignored]);
 
   // One entry per incoming payment, with its match and the admin's choice.
-  const rows = useMemo(() => statement.payments.map((p) => {
-    const m = matchPayer(p, data.people, data.aliases);
-    const state = booked.has(p.id) ? "booked" : ignored.has(p.id) ? "ignored" : m.confident ? "matched" : m.personId ? "suggested" : "unknown";
-    return { ...p, match: m, state };
-  }), [statement, data]);
+  const rows = useMemo(() => {
+    const list = statement.payments.map((p) => {
+      const m = matchPayer(p, data.people, data.aliases);
+      const state = booked.has(p.id) ? "booked" : ignored.has(p.id) ? "ignored" : m.confident ? "matched" : m.personId ? "suggested" : "unknown";
+      return { ...p, match: m, state };
+    });
+    return markDuplicates(list, data);
+  }, [statement, data]);
   const [choice, setChoice] = useState(() => Object.fromEntries(rows.map((r) => [r.id, {
-    personId: r.match.personId || "", include: r.state === "matched", skip: false,
+    personId: r.match.personId || "", include: r.state === "matched" && !r.dups.length, skip: false,
   }])));
   const [remember, setRemember] = useState(true);
   const [showDone, setShowDone] = useState(false);
@@ -325,6 +328,9 @@ function Review({ statement, data, onDone, onClear }) {
       { label: "Already done", value: count("booked") + count("ignored"), sub: "recorded or skipped before" },
     ]} />
     ${skippedTotal > 0 && html`<p class="small muted" style="margin-top:-16px">Left out: ${Object.entries(statement.skipped).map(([k, v]) => `${v} ${k}`).join(" · ")}.</p>`}
+    ${open.some((r) => r.dups.length) && html`<div class="notice warn"><b>${open.filter((r) => r.dups.length).length} possible duplicate${open.filter((r) => r.dups.length).length === 1 ? "" : "s"}</b>:
+      the same amount from the same or a similar name on the same date, in this file or already recorded. They are marked below and not ticked;
+      tick them if they really are separate payments, or mark them "Not coffee".</div>`}
 
     ${shown.length === 0 ? html`<${EmptyState} drawing=${html`<${ReceiptCarrier} size=${110} />`}
         action=${html`<button class="btn" onClick=${onClear}>Choose another file</button>`}>Everything in this file has already been recorded or skipped.<//>`
@@ -347,7 +353,8 @@ function Review({ statement, data, onDone, onClear }) {
                 ? html`<${NewPerson} draft=${drafts[c.personId.slice(4)]} groups=${data.groups}
                     shared=${shown.findIndex((x) => choice[x.id].personId === c.personId) !== shown.indexOf(r)}
                     onChange=${(patch) => setDraft(c.personId.slice(4), patch)} />`
-                : html`<div class="small ${r.state === "matched" ? "pos" : "muted"}">${r.match.how ? `${r.state === "matched" ? "✓ " : "suggested: "}${r.match.how}` : "no match"}</div>`}`}</td>
+                : html`<div class="small ${r.state === "matched" ? "pos" : "muted"}">${r.match.how ? `${r.state === "matched" ? "✓ " : "suggested: "}${r.match.how}` : "no match"}</div>`}
+              ${r.dups.map((d) => html`<div class="dup-note">⚠ Possible duplicate: ${d}</div>`)}`}</td>
             <td class="center"><input type="checkbox" aria-label="Record this payment" checked=${c.include && !c.skip} disabled=${!c.personId || c.skip}
               onChange=${(e) => set(r.id, { include: e.target.checked })} /></td>
             <td class="num">${c.skip
@@ -373,6 +380,39 @@ function Review({ statement, data, onDone, onClear }) {
         <td class="num">${r.state === "ignored" && html`<button class="btn-text" onClick=${() => run(async () => { await api.unignore(r.id); onDone(); })}>Offer again</button>`}</td>
       </tr>`)}</tbody></table></div>`}
   </section>`;
+}
+
+// Same payer: the same PayPal e-mail, the same name, names that share two words (or one is part of the other), or matched to the same person.
+function samePayer(a, b, personA, personB) {
+  if (a.email && a.email === b.email) return true;
+  if (personA && personA === personB) return true;
+  const x = normName(a.name).split(" ").filter(Boolean), y = normName(b.name).split(" ").filter(Boolean);
+  if (!x.length || !y.length) return false;
+  const shared = x.filter((w) => y.includes(w)).length;
+  return shared >= 2 || shared === Math.min(x.length, y.length);
+}
+
+/**
+ * Adds `dups` (reasons, possibly empty) to each payment: another payment in the file with the same date and amount
+ * from the same or a similar payer (the first one is not flagged), or one already recorded in the app.
+ */
+function markDuplicates(list, data) {
+  const byId = new Map(data.people.map((p) => [p.id, p]));
+  return list.map((r, i) => {
+    const dups = [];
+    if (r.state === "booked" || r.state === "ignored") return { ...r, dups };
+    const earlier = list.filter((o, j) => (j < i || o.state === "booked") && o !== r && o.state !== "ignored" && o.date === r.date && near(o.amount, r.amount) && samePayer(r, o, r.match.personId, o.match.personId));
+    if (earlier.length) dups.push(`also in this file from ${earlier[0].name || earlier[0].email} on the same date${earlier[0].state === "booked" ? " (already recorded)" : ""}`);
+    for (const p of data.payments) {
+      if (p.external_id === r.id || p.paid_on !== r.date || !near(p.amount, r.amount)) continue;
+      const fromPayer = p.payer ? { name: p.payer.split(" · ")[0], email: (p.payer.split(" · ")[1] || "").toLowerCase() } : { name: personName(byId.get(p.person_id)), email: "" };
+      if (!samePayer(r, fromPayer, r.match.personId, p.person_id)) continue;
+      if (p.external_id && list.some((o) => o.id === p.external_id)) continue; // the same file's own rows are covered above
+      dups.push(`${fmtEUR(p.amount)} from ${personName(byId.get(p.person_id))} on ${fmtDate(p.paid_on)} is already recorded (${p.method || "payment"}${p.source === "manual" ? ", by hand" : ""})`);
+      break;
+    }
+    return { ...r, dups };
+  });
 }
 
 /** Name, group and lists for a payer who isn't in the app yet (created when the payments are recorded). */

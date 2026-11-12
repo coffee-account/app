@@ -7,7 +7,7 @@ A web app for running the kitchen coffee and drinks lists:
 - **Payments**: record PayPal, cash and other payments, plus corrections.
 - **Print lists**: coffee and drinks lists are generated from each person's two "active" switches. You can customise the layout (texts, columns, tally range, widths, empty rows, image or QR code, A4 portrait or landscape), save it as a template, and export it as PDF (via the print dialog) or Word.
 - **Kitchen duty**:
-  - Everyone fills in their availability for the coming weeks. This is mandatory: the app stays locked until it's done, and a weekly reminder email goes out.
+  - Everyone fills in their availability for the coming weeks. This is mandatory: the app stays locked until it's done. Duty managers send availability reminders when they choose (the app suggests who is due), and can correct anyone's answers.
   - Duty managers assign one or more people per week, and everyone assigned gets an email.
 - **Invoices**: permitted people upload a receipt. The reimbursement address you set in Settings gets an email with the file attached and a download link, and you track each invoice as submitted, reimbursed or rejected.
 - **Import and export**: a one-time import from the old `Coffee Accounting` .xlsx, and an export back to Excel in the same sheet layout.
@@ -57,7 +57,7 @@ Then open <http://localhost:8000>. Run it from the project folder. It serves `we
 ### 1. Supabase project
 
 1. Create a free account at <https://supabase.com>, then a new project. Choose region **Central EU (Frankfurt)** for GDPR.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261116000000_payment_qr.sql`: members can see the PayPal QR code under How to pay). Each script only needs to run once per project.
+2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261117000000_duty_settings_for_managers.sql`: duty managers can change the kitchen-duty settings). Each script only needs to run once per project.
 3. Under **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 
 ### 2. Email sending
@@ -107,7 +107,7 @@ JWT verification is off because the weekly job calls the function without a user
 
 ### 4. Weekly reminders
 
-Edit `supabase/cron.sql` to fill in your project reference and `CRON_SECRET`, then run it in the SQL Editor. Reminders go out every Monday at 08:00 UTC. Admins can also send them at any time with **Duty schedule → Send reminders now**.
+Edit `supabase/cron.sql` to fill in your project reference and `CRON_SECRET`, then run it in the SQL Editor. Every Monday at 08:00 UTC, everyone on duty that week gets a reminder. Availability reminders are not automatic: duty managers send them under **Kitchen duty → Availability reminders…**, where the app ticks the people whose answers are due.
 
 ### 5. Publish on GitHub Pages
 

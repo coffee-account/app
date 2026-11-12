@@ -4,14 +4,18 @@
 
 const escape = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+const emphasis = (s) => s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
+
 function inline(text) {
+  // Finished links are set aside, so an address inside a link's text or target isn't linked a second time.
+  const links = [];
+  const keep = (h) => `\u0003${links.push(h) - 1}\u0004`;
   let s = escape(text);
-  s = s.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^)\s]+)\)/g, (_, t, u) => `<a href="${u}" target="_blank" rel="noopener">${t}</a>`);
-  s = s.replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, u) => `${pre}<a href="${u}" target="_blank" rel="noopener">${u}</a>`);
-  s = s.replace(/(^|[\s(])([\w.+-]+@[\w-]+\.[\w.-]+\w)/g, (_, pre, e) => `${pre}<a href="mailto:${e}">${e}</a>`);
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  s = s.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
-  return s;
+  s = s.replace(/\[([^\]]+)\]\(((?:https?:\/\/|mailto:)[^)\s]+)\)/g, (_, t, u) => keep(`<a href="${u}"${u.startsWith("mailto:") ? "" : ' target="_blank" rel="noopener"'}>${emphasis(t)}</a>`));
+  s = s.replace(/(^|[\s(])((?:https?:\/\/)[^\s<)]+)/g, (_, pre, u) => pre + keep(`<a href="${u}" target="_blank" rel="noopener">${u}</a>`));
+  s = s.replace(/(^|[\s(])([\w.+-]+@[\w-]+\.[\w.-]+\w)/g, (_, pre, e) => pre + keep(`<a href="mailto:${e}">${e}</a>`));
+  // eslint-disable-next-line no-control-regex
+  return emphasis(s).replace(/\u0003(\d+)\u0004/g, (_, i) => links[i]);
 }
 
 /** Returns HTML for the given Markdown text; `vars` replaces {placeholders}. `breaks`: a single line break stays one (as in e-mails). */

@@ -1,4 +1,4 @@
-import { html, useState, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes, useLinkTab } from "../lib/ui.js";
+import { html, useState, useMemo, useLoad, Loading, Field, toast, useBusy, fmtEUR, ConfirmAction, deferDelete, usePendingDeletes, useLinkTab, SearchSelect } from "../lib/ui.js";
 import { PaypalImport, PayoutsTab } from "./paypal.js";
 import * as api from "../lib/api.js";
 import { computeLedger, personName, sortPeople } from "../lib/accounting.js";
@@ -65,6 +65,13 @@ function PaymentForm({ people, ledger, onSaved }) {
   const isPending = usePendingDeletes();
   const set = (k) => (e) => { const v = e.target.value; setF((x) => ({ ...x, [k]: v })); };
   const bal = f.person_id ? ledger.get(f.person_id)?.balance : null;
+  // Everyone on the list, by last name; people on neither list come last.
+  const options = useMemo(() => {
+    const on = (p) => p.active_coffee || p.active_drinks;
+    return [...sortPeople(people.filter(on), "last"), ...sortPeople(people.filter((p) => !on(p)), "last")].map((p) => ({
+      value: p.id, label: `${p.last_name}, ${p.first_name}`, sub: [p.group_name, !on(p) && "not on a list"].filter(Boolean).join(" · "),
+    }));
+  }, [people]);
   return html`<form class="card payment-form" onSubmit=${(e) => {
     e.preventDefault();
     run(async () => {
@@ -79,10 +86,8 @@ function PaymentForm({ people, ledger, onSaved }) {
   }}>
     <div class="form-row">
       <${Field} label="Person" hint=${bal != null ? `Current balance: ${fmtEUR(bal)}` : null}>
-        <select required value=${f.person_id} onChange=${set("person_id")}>
-          <option value="">Choose a person</option>
-          ${sortPeople(people, "last").map((p) => html`<option value=${p.id}>${p.last_name}, ${p.first_name}${p.group_name ? ` (${p.group_name})` : ""}</option>`)}
-        </select><//>
+        <${SearchSelect} options=${options} value=${f.person_id} required ariaLabel="Person" placeholder="Search name"
+          onChange=${(id) => setF((x) => ({ ...x, person_id: id }))} /><//>
       <${Field} label="Date"><input type="date" required value=${f.paid_on} onInput=${set("paid_on")} /><//>
       <${Field} label="Amount (€)"><input inputmode="decimal" required value=${f.amount} onInput=${set("amount")} /><//>
       <${Field} label="Method" hint=${/^paypal/i.test(f.method) ? "Also added to the PayPal balance." : null}><select value=${f.method} onChange=${set("method")}>

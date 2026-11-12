@@ -10,7 +10,8 @@
 //   duty_assigned      { assignment_ids: [] }    duty manager
 //   duty_removed       { person_id, week_start } duty manager
 //   invite             { person_id }             admin
-//   weekly             {}                        cron or admin: availability + duty reminders
+//   weekly             {}                        cron or admin: this week's duty reminders
+//   availability_reminder { person_ids: [] }     duty manager: availability reminders to the people they picked
 //   refund_requested   { request_id }            the requester or admin
 //   issue_reported     { issue_id }              the reporter or admin
 //   issue_resolved     { issue_id }              admin or "resolve reports" right: tells the reporter
@@ -313,54 +314,46 @@ async function invite(caller: Caller, body: any) {
   return { invited: p.email };
 }
 
-// Which of the coming weeks a person has to fill in now: none while the next minWeeks are answered,
-// otherwise every open week up to weeksAhead (as missingAvailability in the web app).
-function missingWeeks(weeksAhead: number, minWeeks: number, filled: Set<string>): string[] {
-  const start = mondayOf(todayBerlin());
-  const open: string[] = [];
-  let due = false;
-  for (let i = 0; i < weeksAhead; i++) {
-    const w = iso(addDays(start, i * 7));
-    if (filled.has(w)) continue;
-    open.push(w);
-    if (i < minWeeks) due = true;
-  }
-  return due ? open : [];
-}
-
-async function weekly(caller: Caller, s: Record<string, any>) {
-  if (!isAdmin(caller)) throw new HttpError(403, "Not allowed");
+// Availability reminders are sent only when a duty manager picks the people (Kitchen duty → Availability reminders).
+// Each e-mail lists that person's unanswered weeks up to weeks_ahead; people with nothing open are skipped.
+async function availabilityReminder(caller: Caller, body: any, s: Record<string, any>) {
+  if (!isDutyManager(caller)) throw new HttpError(403, "Not allowed");
+  const ids: string[] = [...new Set<string>(body.person_ids ?? [])];
   const av = s.availability ?? {};
   const weeksAhead = Number(av.weeks_ahead ?? 6);
-  const minWeeks = Math.min(weeksAhead, Number(av.min_weeks ?? 3));
-  const summary = { availability_reminders: 0, duty_reminders: 0, errors: [] as string[] };
-
-  if (av.reminders !== false) {
-    const { data: profiles } = await db.from("profiles").select("person_id, email").not("person_id", "is", null);
-    const ids = (profiles ?? []).map((p) => p.person_id);
-    const { data: people } = await db.from("people").select("*").in("id", ids.length ? ids : ["00000000-0000-0000-0000-000000000000"]);
-    const from = iso(mondayOf(todayBerlin()));
-    const { data: avail } = await db.from("availability").select("person_id, week_start").gte("week_start", from);
-    const { data: free } = await db.from("duty_free_weeks").select("week_start").gte("week_start", from);
-    for (const p of people ?? []) {
-      if (av.required_for !== "all" && !p.active_duty) continue;
-      // Weeks without kitchen duty need no answer.
-      const filled = new Set([...(avail ?? []).filter((a) => a.person_id === p.id), ...(free ?? [])].map((a) => a.week_start));
-      const missing = missingWeeks(weeksAhead, minWeeks, filled);
-      if (!missing.length) continue;
-      const email = p.email ?? profiles?.find((x) => x.person_id === p.id)?.email;
-      if (!email) continue;
-      try {
-        const weeks = `<ul style="font-size:14px">${missing.map((w) => `<li>${escapeHtml(weekLabel(w))}</li>`).join("")}</ul>`;
-        await sendMail({ to: [email], ...await compose("availability_reminder",
-          { first_name: p.first_name, count: missing.length, weeks_ahead: weeksAhead }, { weeks }, s) });
-        summary.availability_reminders++;
-      } catch (e) {
-        summary.errors.push(`${email}: ${errMsg(e)}`);
-      }
+  const summary = { sent: 0, skipped: [] as { person_id: string; reason: string }[] };
+  if (!ids.length) return summary;
+  const from = iso(mondayOf(todayBerlin()));
+  const [{ data: people }, { data: profiles }, { data: avail }, { data: free }] = await Promise.all([
+    db.from("people").select("*").in("id", ids),
+    db.from("profiles").select("person_id, email").in("person_id", ids),
+    db.from("availability").select("person_id, week_start").in("person_id", ids).gte("week_start", from),
+    db.from("duty_free_weeks").select("week_start").gte("week_start", from),
+  ]);
+  for (const id of ids) {
+    const p = (people ?? []).find((x) => x.id === id);
+    if (!p) { summary.skipped.push({ person_id: id, reason: "not found" }); continue; }
+    const filled = new Set([...(avail ?? []).filter((a) => a.person_id === id), ...(free ?? [])].map((a) => a.week_start));
+    const open = Array.from({ length: weeksAhead }, (_, i) => iso(addDays(from, i * 7))).filter((w) => !filled.has(w));
+    if (!open.length) { summary.skipped.push({ person_id: id, reason: "all weeks answered" }); continue; }
+    const email = p.email ?? profiles?.find((x) => x.person_id === id)?.email;
+    if (!email) { summary.skipped.push({ person_id: id, reason: "no e-mail address" }); continue; }
+    try {
+      const weeks = `<ul style="font-size:14px">${open.map((w) => `<li>${escapeHtml(weekLabel(w))}</li>`).join("")}</ul>`;
+      await sendMail({ to: [email], ...await compose("availability_reminder",
+        { first_name: p.first_name, count: open.length, weeks_ahead: weeksAhead }, { weeks }, s) });
+      summary.sent++;
+    } catch (e) {
+      summary.skipped.push({ person_id: id, reason: errMsg(e) });
     }
   }
+  return summary;
+}
 
+// Monday mornings (cron) or an admin: reminds everyone on duty this week.
+async function weekly(caller: Caller, s: Record<string, any>) {
+  if (!isAdmin(caller)) throw new HttpError(403, "Not allowed");
+  const summary = { duty_reminders: 0, errors: [] as string[] };
   if (s.duty?.reminders !== false) {
     const week = iso(mondayOf(todayBerlin()));
     const { data: rows } = await db.from("duty_assignments").select("*").eq("week_start", week);
@@ -394,6 +387,7 @@ Deno.serve(async (req) => {
       case "duty_removed": return json(await dutyRemoved(caller, body, s));
       case "invite": return json(await invite(caller, body));
       case "weekly": return json(await weekly(caller, s));
+      case "availability_reminder": return json(await availabilityReminder(caller, body, s));
       case "refund_requested": return json(await refundRequested(caller, body, s));
       case "issue_reported": return json(await issueReported(caller, body, s));
       case "issue_resolved": return json(await issueResolved(caller, body, s));

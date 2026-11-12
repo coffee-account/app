@@ -25,8 +25,6 @@ function GeneralSettings({ settings, onSaved }) {
     app_name: settings.app_name ?? "Coffee & Drinks",
     signup_domains: (settings.signup_domains || []).join(", "),
     reimbursement: { to: "", cc_submitter: true, ...settings.reimbursement },
-    availability: { weeks_ahead: 6, min_weeks: 3, required_for: "active", reminders: true, ...settings.availability },
-    duty: { people_per_week: 2, info: "", reminders: true, ...settings.duty },
     balance: { low_threshold: -10, starting_label: "Starting balance", ...settings.balance },
     payment_info: settings.payment_info ?? "",
     payment_qr: settings.payment_qr ?? "", // PayPal QR code shown with "How to pay" (a data URL, "" for none)
@@ -44,8 +42,6 @@ function GeneralSettings({ settings, onSaved }) {
       const values = {
         ...s,
         signup_domains: s.signup_domains.split(/[,\s]+/).map((d) => d.trim().replace(/^@/, "").toLowerCase()).filter(Boolean),
-        availability: { ...s.availability, weeks_ahead: Number(s.availability.weeks_ahead) || 0, min_weeks: Number(s.availability.min_weeks) || 3 },
-        duty: { ...s.duty, people_per_week: Number(s.duty.people_per_week) || 0 },
         balance: { ...s.balance, low_threshold: Number(String(s.balance.low_threshold).replace(",", ".")) || 0 },
       };
       for (const [k, v] of Object.entries(values)) await api.saveSetting(k, v);
@@ -55,7 +51,7 @@ function GeneralSettings({ settings, onSaved }) {
   };
 
   return html`<form onSubmit=${save}>
-    <div class="grid cols-2">
+    <div class="grid cols-2" style="align-items:start">
       <div class="card">
         <h2>General & access</h2>
         <div class="grid">
@@ -68,33 +64,11 @@ function GeneralSettings({ settings, onSaved }) {
           <${PaymentQr} value=${s.payment_qr} onChange=${(v) => setS({ ...s, payment_qr: v })} />
         </div>
       </div>
-      <div class="card">
-        <h2>Kitchen duty</h2>
-        <div class="grid">
-          <div class="form-grid">
-            <${Field} label="Weeks people fill in ahead"><input type="number" min="1" max="26" value=${s.availability.weeks_ahead} onInput=${(e) => sub("availability", { weeks_ahead: e.target.value })} /><//>
-            <${Field} label="Minimum weeks answered" hint="Only once fewer weeks are answered are people asked again, then up to the weeks ahead.">
-              <input type="number" min="1" max="26" value=${s.availability.min_weeks} onInput=${(e) => sub("availability", { min_weeks: e.target.value })} /><//>
-            <${Field} label="People per week (target)"><input type="number" min="0" max="10" value=${s.duty.people_per_week} onInput=${(e) => sub("duty", { people_per_week: e.target.value })} /><//>
-          </div>
-          <${Field} label="Availability is mandatory for">
-            <select value=${s.availability.required_for} onChange=${(e) => sub("availability", { required_for: e.target.value })}>
-              <option value="active">Everyone in the kitchen-duty pool</option>
-              <option value="all">Every connected account</option>
-            </select><//>
-          <label class="check"><input type="checkbox" checked=${s.availability.reminders} onChange=${(e) => sub("availability", { reminders: e.target.checked })} />
-            Weekly reminder e-mail to people whose answered weeks run low</label>
-          <label class="check"><input type="checkbox" checked=${s.duty.reminders} onChange=${(e) => sub("duty", { reminders: e.target.checked })} />
-            Remind people on duty at the start of their week</label>
-          <p class="small muted" style="margin:0">The texts of the duty e-mails are under <a href="#/emails">E-mails</a>.</p>
-        </div>
-      </div>
-    </div>
     <div class="card">
       <h2>Notifications</h2>
       <p class="lede" style="margin-bottom:14px">Who gets which e-mail. Several addresses: separate them with commas.
         Empty fields under <i>Refunds</i> and <i>Reported issues</i> go to all admins.</p>
-      <div class="grid cols-2">
+      <div class="grid" style="gap:20px">
         <div class="grid" style="align-content:start">
           <h3 style="margin:0">Invoices and advance payments</h3>
           <${Field} label="Reimbursement and advance requests"><input value=${s.reimbursement.to} placeholder="finance@example.org"
@@ -114,6 +88,7 @@ function GeneralSettings({ settings, onSaved }) {
             onInput=${(e) => { const v = e.target.value; setS((x) => ({ ...x, notifications: { ...x.notifications, issues: { ...x.notifications.issues, [k]: v } } })); }} /><//>`)}
         </div>
       </div>
+    </div>
     </div>
     <div class="row end" style="margin-bottom:16px"><button class="btn primary" disabled=${busy}>Save settings</button></div>
   </form>`;

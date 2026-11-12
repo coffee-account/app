@@ -259,3 +259,101 @@ export function usePersisted(key, initial) {
   }, [key]);
   return [value, set];
 }
+
+// ── Searchable pick list ──
+const fold = (s) => String(s || "").toLowerCase().replace(/ß/g, "ss").normalize("NFD").replace(/[̀-ͯ]/g, "");
+
+/**
+ * A text box that searches a list, with the whole list showing underneath while you type.
+ * options: [{ value, label, sub? }]; arrow keys and Enter pick, Escape closes.
+ */
+export function SearchSelect({ options, value, onChange, placeholder = "Search…", ariaLabel, required }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [hi, setHi] = useState(0);
+  const list = useRef(null);
+  const input = useRef(null);
+  const chosen = options.find((o) => o.value === value);
+  const words = fold(q).split(/[\s,]+/).filter(Boolean);
+  const shown = words.length ? options.filter((o) => { const t = fold(`${o.label} ${o.sub || ""}`); return words.every((w) => t.includes(w)); }) : options;
+  const pick = (o) => { onChange(o.value); setQ(""); setOpen(false); };
+  useEffect(() => { setHi(q ? 0 : Math.max(0, shown.findIndex((o) => o.value === value))); }, [q, open]);
+  useEffect(() => { list.current?.children[hi]?.scrollIntoView({ block: "nearest" }); }, [hi, open]);
+  const onKey = (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); if (!open) setOpen(true); else setHi((i) => Math.min(shown.length - 1, i + 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHi((i) => Math.max(0, i - 1)); }
+    else if (e.key === "Enter" && open) { e.preventDefault(); if (shown[hi]) pick(shown[hi]); }
+    else if (e.key === "Escape" && open) { e.stopPropagation(); setOpen(false); setQ(""); }
+  };
+  return html`<div class="search-select ${open ? "open" : ""}">
+    <input ref=${input} role="combobox" aria-expanded=${open} aria-autocomplete="list" aria-label=${ariaLabel} autocomplete="off"
+      required=${required && !value} placeholder=${chosen ? "" : placeholder}
+      value=${open ? q : chosen?.label || ""}
+      onFocus=${() => setOpen(true)} onMouseDown=${() => setOpen(true)} onBlur=${() => { setOpen(false); setQ(""); }}
+      onInput=${(e) => { setQ(e.target.value); setOpen(true); }} onKeyDown=${onKey} />
+    ${open && chosen && !q && html`<span class="search-select-current">${chosen.label}</span>`}
+    <button type="button" class="search-select-toggle" tabindex="-1" aria-label="Show the list"
+      onMouseDown=${(e) => { e.preventDefault(); if (open) setOpen(false); else input.current?.focus(); setOpen(!open); }}>▾</button>
+    ${open && html`<ul class="search-select-list" role="listbox" ref=${list}>
+      ${shown.length ? shown.map((o, i) => html`<li role="option" aria-selected=${o.value === value} class=${`${i === hi ? "hi" : ""} ${o.value === value ? "chosen" : ""}`}
+          onMouseDown=${(e) => { e.preventDefault(); pick(o); }} onMouseEnter=${() => setHi(i)}>
+          <span>${o.label}</span>${o.sub && html`<small>${o.sub}</small>`}</li>`)
+        : html`<li class="empty">No match</li>`}
+    </ul>`}
+  </div>`;
+}
+
+// ── Links in Markdown texts ──
+/** "name@example.org" → mailto:, "www.…" → https://; spaces in the address are encoded. */
+export function linkTarget(raw) {
+  let u = String(raw || "").trim();
+  if (!u) return "";
+  if (/^mailto:/i.test(u)) u = `mailto:${u.slice(7)}`;
+  else if (/^[^\s/:@]+@[^\s/:@]+\.[^\s/:@]+(\?.*)?$/.test(u)) u = `mailto:${u}`;
+  else if (!/^https?:\/\//i.test(u)) u = `https://${u.replace(/^\/+/, "")}`;
+  return u.replace(/ /g, "%20").replace(/\)/g, "%29");
+}
+
+/**
+ * "Insert link" for a Markdown textarea: asks for the text and a web or e-mail address and writes [text](address)
+ * at the cursor (around the selected text, if any). `textarea` is a ref; `onInsert` gets the new full text.
+ */
+export function LinkInserter({ textarea, onInsert }) {
+  const [form, setForm] = useState(null); // null | { text, url, start, end }
+  const first = useRef(null);
+  const second = useRef(null);
+  const opened = !!form;
+  useEffect(() => { if (opened) (form.text ? second : first).current?.focus(); }, [opened]);
+  const begin = () => {
+    const t = textarea.current;
+    const start = t?.selectionStart ?? t?.value.length ?? 0;
+    const end = t?.selectionEnd ?? start;
+    const text = t ? t.value.slice(start, end) : "";
+    setForm(/@|^https?:|^www\./.test(text.trim()) ? { text: "", url: text.trim(), start, end } : { text, url: "", start, end });
+  };
+  const insert = () => {
+    const t = textarea.current;
+    const url = linkTarget(form.url);
+    if (!url || !t) return;
+    const label = form.text.trim().replace(/[[\]]/g, "") || form.url.trim().replace(/^mailto:/i, "");
+    const before = t.value.slice(0, form.start);
+    const md = `${before && !/\s$/.test(before) && form.start === form.end ? " " : ""}[${label}](${url})`;
+    const next = t.value.slice(0, form.start) + md + t.value.slice(form.end);
+    onInsert(next);
+    setForm(null);
+    setTimeout(() => { t.focus(); t.setSelectionRange(form.start + md.length, form.start + md.length); }, 0);
+  };
+  if (!form) {
+    return html`<div class="md-toolbar"><button type="button" class="btn small" onMouseDown=${(e) => e.preventDefault()} onClick=${begin}>Insert link…</button>
+      <span class="small muted">Web page or e-mail address; select text first to turn it into the link.</span></div>`;
+  }
+  const onKey = (e) => { if (e.key === "Enter") { e.preventDefault(); insert(); } if (e.key === "Escape") { e.stopPropagation(); setForm(null); } };
+  return html`<div class="md-toolbar link-form">
+    <input aria-label="Link text" placeholder="Text to show, e.g. Write to us" value=${form.text} ref=${first} onInput=${(e) => { const text = e.target.value; setForm((f) => ({ ...f, text })); }} onKeyDown=${onKey} />
+    <input aria-label="Web or e-mail address" placeholder="https://… or name@example.org" value=${form.url} ref=${second}
+      onInput=${(e) => { const url = e.target.value; setForm((f) => ({ ...f, url })); }} onKeyDown=${onKey} />
+    <button type="button" class="btn small primary" disabled=${!form.url.trim()} onClick=${insert}>Insert</button>
+    <button type="button" class="btn-text" onClick=${() => setForm(null)}>Cancel</button>
+    ${form.url.trim() && html`<span class="small muted" style="flex-basis:100%">Links to ${linkTarget(form.url)}</span>`}
+  </div>`;
+}

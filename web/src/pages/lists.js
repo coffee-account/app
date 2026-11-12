@@ -8,8 +8,7 @@ import { RichText } from "../lib/richtext.js";
 export function ListsPage() {
   const [kind, setKind] = useState("coffee");
   return html`
-    <div class="page-head"><div><h1>Print lists</h1>
-      <p>Generated from each person's "active" switch. Adjust the layout, save it as a template, then print to PDF or export to Word.</p></div></div>
+    <div class="page-head"><div><h1>Print lists</h1></div></div>
     <div class="tabs">
       <button class=${kind === "coffee" ? "active" : ""} onClick=${() => setKind("coffee")}>Coffee list</button>
       <button class=${kind === "drinks" ? "active" : ""} onClick=${() => setKind("drinks")}>Drinks list</button>
@@ -84,23 +83,6 @@ function DesignerBody({ kind, data, reload }) {
     reader.readAsDataURL(file);
   };
 
-  const print = () => {
-    const root = document.createElement("div");
-    root.className = "print-root";
-    root.innerHTML = previewRef.current.innerHTML;
-    root.querySelectorAll(".paper").forEach((p) => { p.style.zoom = ""; });
-    root.querySelectorAll(".picked").forEach((el) => el.classList.remove("picked"));
-    const style = document.createElement("style");
-    const [w, h] = PAGE[cfg.orientation];
-    style.textContent = `@page { size: ${w}mm ${h}mm; margin: 0; }`;
-    document.body.append(root, style);
-    const prevTitle = document.title;
-    document.title = listTitle(cfg, date);
-    const cleanup = () => { root.remove(); style.remove(); document.title = prevTitle; window.removeEventListener("afterprint", cleanup); };
-    window.addEventListener("afterprint", cleanup);
-    window.print();
-    setTimeout(cleanup, 1000);
-  };
   const docx = () => run(async () => {
     const blob = await exportDocx(kind, cfg, cols, rows, date);
     downloadBlob(blob, `${cfg.title || kind} ${date}.docx`);
@@ -142,14 +124,9 @@ function DesignerBody({ kind, data, reload }) {
         <h3>Export</h3>
         <${Field} label="List date (printed in the header and used for duty weeks)"><input type="date" value=${date} onInput=${(e) => setDate(e.target.value)} /><//>
         <div class="row" style="margin-top:10px">
-          <button class="btn primary" onClick=${print}>Print / save as PDF</button>
-          <button class="btn" disabled=${busy} onClick=${docx}>Word (.docx)</button>
+          <button class="btn primary" disabled=${busy} onClick=${docx}>Word (.docx)</button>
         </div>
-        <label class="check" style="margin-top:10px"><input type="checkbox" checked=${cfg.wordArial} onChange=${(e) => set({ wordArial: e.target.checked })} />
-          Use Arial in the Word file</label>
-        <p class="small muted" style="margin:4px 0 0">The Word file uses Fraunces, Newsreader and Schibsted Grotesk. Word shows other fonts where these aren't installed; they're free from Google Fonts.</p>
-        <p class="small muted" style="margin:8px 0 0">${printed} people + ${cfg.blankRows} empty rows · ${pages.length} page${pages.length > 1 ? "s" : ""}.
-          In the print dialog choose "Save as PDF" and turn off headers/footers.</p>
+        <p class="small muted" style="margin:8px 0 0">${printed} people + ${cfg.blankRows} empty rows · ${pages.length} page${pages.length > 1 ? "s" : ""}</p>
       </div>
 
       <div class="card">

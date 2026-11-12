@@ -292,9 +292,9 @@ table.data.matrix { width: max-content; min-width: 100%; }
 @media (max-width: 1000px) { .designer { grid-template-columns: 1fr; } .designer .controls { position: static; max-height: none; } }
 .preview-scroll { overflow: auto; background: var(--tint); padding: 20px; border-radius: var(--r-table); border: 1px solid var(--rule-soft); }
 /* Print format (guide §17): white paper, black ink, 0.5 pt grid, 1.5 pt under the header, 1 pt every five people. */
-.paper { background: #fff; color: #000; margin: 0 auto 20px; box-shadow: 0 1px 0 rgba(0, 0, 0, .15), 0 0 0 1px rgba(0, 0, 0, .08); font-family: "Schibsted Grotesk", Arial, sans-serif; position: relative; overflow: hidden; }
-.paper .list-title { font-family: "Fraunces", Georgia, serif; font-weight: 800; font-variation-settings: "SOFT" 100; text-align: center; margin: 0 0 2mm; line-height: 1.1; }
-.paper .list-intro, .paper .list-footer { font-family: "Newsreader", Georgia, serif; line-height: 1.35; }
+.paper { background: #fff; color: #000; margin: 0 auto 20px; box-shadow: 0 1px 0 rgba(0, 0, 0, .15), 0 0 0 1px rgba(0, 0, 0, .08); font-family: Arial, Helvetica, sans-serif; position: relative; overflow: hidden; }
+.paper .list-title { font-weight: 700; text-align: center; margin: 0 0 2mm; line-height: 1.1; }
+.paper .list-intro, .paper .list-footer { line-height: 1.35; }
 .paper .list-intro { margin: 0 0 3mm; }
 .paper .list-line { white-space: pre-wrap; }
 .paper .list-image { position: absolute; }
@@ -304,7 +304,7 @@ table.data.matrix { width: max-content; min-width: 100%; }
 .paper table.list tr.five td, .paper table.list td.five { border-bottom: 1pt solid #000; }
 .paper table.list td.duty { white-space: pre; line-height: 1.1; vertical-align: middle; }
 .paper table.list th.tally { text-align: center; padding: 0; text-overflow: clip; letter-spacing: -.02em; }
-.paper .list-date { position: absolute; font-family: "Schibsted Grotesk", Arial, sans-serif; }
+.paper .list-date { position: absolute; }
 .paper { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
 .paper .list-footer { position: absolute; left: 0; right: 0; text-align: center; }
 .people-pick { max-height: 260px; overflow-y: auto; border: 1px solid var(--rule-soft); border-radius: var(--r-field); padding: 6px 10px; background: var(--cup); }
@@ -408,3 +408,27 @@ table.data tr.group-row .group-done.on { color: var(--ok); }
 .pay-card { display: flex; gap: 20px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
 .pay-card figure { margin: 0; text-align: center; }
 .pay-qr { width: 150px; height: auto; display: block; background: #fff; border-radius: 8px; padding: 6px; border: 1px solid var(--rule-soft); }
+
+/* Searchable pick list (Money in: person). */
+.search-select { position: relative; width: 100%; min-width: 0; }
+.field:has(> .search-select) { min-width: 0; }
+.search-select input { padding-right: 30px; }
+.search-select-current { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); color: var(--ink-mute); pointer-events: none; white-space: nowrap; overflow: hidden; max-width: calc(100% - 44px); }
+.search-select-toggle { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); border: 0; background: none; cursor: pointer; color: var(--ink-mute); padding: 4px 6px; }
+.search-select-list { position: absolute; z-index: 30; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; max-height: 300px; overflow-y: auto;
+  background: var(--cup); border: 1px solid var(--rule-soft); border-radius: var(--r-field); box-shadow: 0 8px 24px rgba(36, 26, 20, .16); min-width: 260px; }
+.search-select-list li { display: flex; justify-content: space-between; gap: 12px; padding: 7px 10px; border-radius: 6px; cursor: pointer; font-size: 14px; }
+.search-select-list li small { color: var(--ink-mute); white-space: nowrap; }
+.search-select-list li.hi { background: var(--tint); }
+.search-select-list li.chosen { font-weight: 700; }
+.search-select-list li.empty { color: var(--ink-mute); cursor: default; }
+
+/* "Insert link" above Markdown text fields. */
+.md-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 2px 0 6px; }
+.md-toolbar.link-form input { flex: 1 1 180px; width: auto; }
+
+/* Availability next to duties (My account), possible duplicates (PayPal import), changes (duty import). */
+.dup-note { color: var(--cherry); font-size: 12px; font-weight: 600; margin-top: 2px; }
+.change-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.change-list li { margin: 1px 0; }
+td .avail-cell { display: inline-flex; align-items: center; gap: 6px; }

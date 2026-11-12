@@ -1,6 +1,5 @@
--- Weekly reminders: every Monday at 08:00 (UTC) the "notify" function e-mails
---   • everyone whose mandatory kitchen-duty availability is incomplete
---   • everyone on kitchen duty that week
+-- Weekly reminders: every Monday at 08:00 (UTC) the "notify" function e-mails everyone on kitchen duty that week.
+-- (Availability reminders are sent by duty managers in the app, not by this job.)
 -- Replace the two placeholders, then run this once in the Supabase SQL editor.
 --   <PROJECT-REF>   your project reference (from the project URL)
 --   <CRON_SECRET>   the same value you set as the CRON_SECRET function secret

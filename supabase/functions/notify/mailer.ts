@@ -97,14 +97,18 @@ ${body}
 const P = 'style="font-size:14px"';
 const A = 'style="color:#8a4b2a"';
 
+const emphasis = (s: string) => s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>").replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
+
 function inline(text: string): string {
+  // Finished links are set aside, so an address inside a link's text or target isn't linked a second time.
+  const links: string[] = [];
+  const keep = (h: string) => `\u0003${links.push(h) - 1}\u0004`;
   let s = escapeHtml(text);
-  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => (/^(https?:\/\/|mailto:)/.test(u) ? `<a href="${u}" ${A}>${t}</a>` : t));
-  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, pre, u) => `${pre}<a href="${u}" ${A}>${u}</a>`);
-  s = s.replace(/(^|[\s(])([\w.+-]+@[\w-]+\.[\w.-]+\w)/g, (_, pre, e) => `${pre}<a href="mailto:${e}" ${A}>${e}</a>`);
-  s = s.replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
-  s = s.replace(/(^|[^*])\*([^*\s][^*]*)\*/g, "$1<i>$2</i>");
-  return s;
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, t, u) => (/^(https?:\/\/|mailto:)/.test(u) ? keep(`<a href="${u}" ${A}>${emphasis(t)}</a>`) : t));
+  s = s.replace(/(^|[\s(])(https?:\/\/[^\s<)]+)/g, (_, pre, u) => pre + keep(`<a href="${u}" ${A}>${u}</a>`));
+  s = s.replace(/(^|[\s(])([\w.+-]+@[\w-]+\.[\w.-]+\w)/g, (_, pre, e) => pre + keep(`<a href="mailto:${e}" ${A}>${e}</a>`));
+  // deno-lint-ignore no-control-regex
+  return emphasis(s).replace(/\u0003(\d+)\u0004/g, (_, i) => links[Number(i)]);
 }
 
 export function renderTemplate(
