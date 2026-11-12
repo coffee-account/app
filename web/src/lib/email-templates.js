@@ -85,6 +85,18 @@ Pay it out, then mark it as reimbursed under [Invoices]({app_url}#/invoices).`,
 The receipt will follow once the purchase has been made.`,
   },
   {
+    key: "low_balance", editor: "admin", label: "Low balance", to: "The people an admin picks on the Balances page",
+    vars: { first_name: "Ada", balance: "-12,40 €", threshold: "-10,00 €", payment_info: "Transfer to the PayPal account coffee@example.org.", app_url: "https://example.org/" },
+    subject: "Your coffee balance: {balance}",
+    body: `Hi {first_name},
+
+your balance on the coffee and drinks list is **{balance}**, below {threshold}. Please top it up soon.
+
+{payment_info}
+
+[See your balance and history]({app_url})`,
+  },
+  {
     key: "refund_requested", editor: "admin", label: "Refund requested", to: "The refund address (Settings → Notifications), else all admins",
     vars: { person: "Ada Lovelace", amount: "18,20 €", details: "**Amount** 18,20 €\n**How** PayPal", app_url: "https://example.org/" },
     subject: "Refund request: {amount} – {person}",

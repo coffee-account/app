@@ -124,6 +124,7 @@ class Store {
     // Demo data saved before newer features existed.
     for (const t of ["updates", "refund_requests", "issues", "payer_aliases", "ignored_transactions", "payouts", "duty_free_weeks", "counted_groups"]) this.db[t] ??= [];
     this.db.email_templates ??= emailTemplates();
+    for (const t of emailTemplates()) if (!this.db.email_templates.some((x) => x.key === t.key)) this.db.email_templates.push(t); // texts added later
     for (const t of this.db.email_templates) t.body = t.body.replace("You share it with {mates}.", "On duty with you: {others_on_duty}.").replaceAll("{mates}", "{others_on_duty}");
     for (const p of this.db.people) if (p.active_duty === undefined) Object.assign(p, { active_duty: p.active_coffee || p.active_drinks, duty_carryover: 0, duty_rounds_before: 0 });
     this.save();
@@ -326,6 +327,12 @@ export function createDemoClient(notify) {
           msg = `Demo: invitation e-mail would be sent to ${who(body.person_id)?.email}`;
         } else if (body.type === "weekly") {
           msg = "Demo: this week's duty reminders would be sent now";
+        } else if (body.type === "low_balance") {
+          const now = new Date().toISOString();
+          const names = body.items.map((x) => { const p = who(x.person_id); if (p) p.low_balance_reminded_at = now; return p?.first_name; }).filter(Boolean);
+          store.save();
+          notify(`Demo e-mail → ${names.join(", ")}: low balance`);
+          return { data: { sent: names.length, skipped: [] }, error: null };
         } else if (body.type === "availability_reminder") {
           const names = body.person_ids.map((id) => who(id)?.first_name).filter(Boolean);
           store.save();

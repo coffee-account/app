@@ -27,12 +27,14 @@ export function BalancesPage() {
   const [q, setQ] = useState("");
   const [detail, setDetail] = useState(null);
   const [editPaypal, setEditPaypal] = useState(false);
+  const [reminding, setReminding] = useState(false);
   const [busy, run] = useBusy();
   const low = Number(app.settings.balance?.low_threshold ?? -10);
 
   return html`
     <div class="page-head"><div><h1>Balances</h1><p>Starting balance plus payments, minus everything counted at the price of its date.</p></div>
       ${state.data && html`<div class="row">
+        <button class="btn" onClick=${() => setReminding(true)}>Low-balance reminders…</button>
         <button class="btn" disabled=${busy} onClick=${() => run(() => exportCsv(state.data))}>Export CSV</button>
         <button class="btn" disabled=${busy} onClick=${() => run(() => exportXlsx(state.data, app.settings))}>Export Excel</button></div>`}
     </div>
@@ -87,8 +89,65 @@ export function BalancesPage() {
         </table></div>
         ${editPaypal && html`<${PaypalBalanceModal} paypal=${data.paypal} onClose=${() => setEditPaypal(false)}
           onSaved=${() => { setEditPaypal(false); state.reload(); }} />`}
+        ${reminding && html`<${LowBalanceModal} rows=${all} low=${low} onClose=${() => setReminding(false)} onSent=${state.reload} />`}
         ${detail && html`<${DetailModal} row=${detail} label=${app.settings.balance?.starting_label} onClose=${() => setDetail(null)} />`}`;
     }}<//>`;
+}
+
+/**
+ * Low-balance reminders go out only when an admin sends them. Suggested (ticked): people on a list whose balance
+ * is below the threshold and who weren't reminded in the last 7 days; the admin decides who gets one.
+ */
+function LowBalanceModal({ rows, low, onClose, onSent }) {
+  const recent = new Date(Date.now() - 7 * 864e5).toISOString();
+  const onList = (p) => p.active_coffee || p.active_drinks;
+  const list = rows.filter((r) => r.balance < low).map((r) => {
+    const p = r.person;
+    const reminded = p.low_balance_reminded_at || null;
+    return { r, p, reminded, suggest: onList(p) && !(reminded && reminded > recent) };
+  }).sort((a, b) => b.suggest - a.suggest || a.r.balance - b.r.balance);
+  const [picked, setPicked] = useState(() => new Set(list.filter((x) => x.suggest).map((x) => x.p.id)));
+  const [result, setResult] = useState(null);
+  const [busy, run] = useBusy();
+  const toggle = (id) => setPicked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const send = () => run(async () => {
+    const items = list.filter((x) => picked.has(x.p.id)).map((x) => ({ person_id: x.p.id, balance: Math.round(x.r.balance * 100) / 100 }));
+    const res = await api.sendLowBalanceReminders(items);
+    setResult(res);
+    toast(`${res.sent} low-balance reminder${res.sent === 1 ? "" : "s"} sent`);
+    onSent();
+  });
+  const nameOf = (id) => personName(list.find((x) => x.p.id === id)?.p);
+  return html`<${Modal} title="Low-balance reminders" onClose=${onClose} wide>
+    <p class="lede" style="margin:6px 0 14px">Everyone below ${fmtEUR(low)} (the threshold in Settings). Suggested (ticked): people on a list who
+      weren't reminded in the last 7 days. Each e-mail gives their balance and how to pay; the text is under <a href="#/emails">E-mails</a>.</p>
+    ${result ? html`<div class="notice ok">${result.sent} reminder${result.sent === 1 ? "" : "s"} sent.</div>
+        ${result.skipped?.length > 0 && html`<div class="notice warn">Not sent: <ul>${result.skipped.map((x) => html`<li>${nameOf(x.person_id)}: ${x.reason}</li>`)}</ul></div>`}
+        <div class="row end"><button class="btn primary" onClick=${onClose}>Close</button></div>`
+      : list.length === 0 ? html`<div class="notice ok">Nobody is below ${fmtEUR(low)}. No reminders needed.</div>`
+      : html`<div class="toolbar">
+          <button class="btn-text" onClick=${() => setPicked(new Set(list.filter((x) => x.suggest).map((x) => x.p.id)))}>Pick the suggested</button>
+          <button class="btn-text" onClick=${() => setPicked(new Set(list.map((x) => x.p.id)))}>Pick everyone listed</button>
+          <button class="btn-text" onClick=${() => setPicked(new Set())}>Pick nobody</button>
+          <span class="count">${list.filter((x) => x.suggest).length} suggested · ${list.length} below ${fmtEUR(low)}</span>
+        </div>
+        <div class="table-wrap" style="max-height:50vh;overflow-y:auto"><table class="data">
+          <thead><tr><th></th><th>Name</th><th>Group</th><th class="num">Balance</th><th>Last reminded</th></tr></thead>
+          <tbody>${list.map(({ r, p, reminded }) => html`<tr key=${p.id} class=${onList(p) ? "" : "inactive"}>
+            <td><input type="checkbox" aria-label=${`Remind ${personName(p)}`} checked=${picked.has(p.id)} onChange=${() => toggle(p.id)} /></td>
+            <td>${personName(p)}${!onList(p) && html` <span class="badge">not on a list</span>`}</td>
+            <td>${p.group_name || ""}</td>
+            <td class="num neg" style="font-weight:600">${fmtEUR(r.balance)}</td>
+            <td class="small ${reminded ? "" : "muted"}">${reminded ? fmtDate(reminded.slice(0, 10)) : "never"}</td>
+          </tr>`)}</tbody>
+        </table></div>
+        <div class="row" style="margin-top:14px">
+          <span class="small muted">${picked.size ? `${picked.size} picked` : "Nobody picked."}</span>
+          <span class="spacer"></span>
+          <button class="btn-text" onClick=${onClose}>Cancel</button>
+          <button class="btn primary" disabled=${busy || !picked.size} onClick=${send}>Send ${picked.size} reminder${picked.size === 1 ? "" : "s"}</button>
+        </div>`}
+  <//>`;
 }
 
 function DetailModal({ row, label, onClose }) {

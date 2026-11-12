@@ -284,6 +284,13 @@ export async function sendAvailabilityReminders(person_ids) {
   return res.data;
 }
 
+/** Low-balance reminders; items: [{ person_id, balance }]. Returns { sent, skipped: [{ person_id, reason }] }. */
+export async function sendLowBalanceReminders(items) {
+  const res = await sb.functions.invoke("notify", { body: { type: "low_balance", items } });
+  if (res.error) throw new Error(await errorMessage(res.error));
+  return res.data;
+}
+
 // supabase-js wraps function errors; the useful message is in the response body.
 async function errorMessage(err) {
   try {

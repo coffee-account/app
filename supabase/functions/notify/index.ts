@@ -12,6 +12,7 @@
 //   invite             { person_id }             admin
 //   weekly             {}                        cron or admin: this week's duty reminders
 //   availability_reminder { person_ids: [] }     duty manager: availability reminders to the people they picked
+//   low_balance        { items: [{ person_id, balance }] }  admin, or group admin for their group: low-balance reminders
 //   refund_requested   { request_id }            the requester or admin
 //   issue_reported     { issue_id }              the reporter or admin
 //   issue_resolved     { issue_id }              admin or "resolve reports" right: tells the reporter
@@ -350,6 +351,41 @@ async function availabilityReminder(caller: Caller, body: any, s: Record<string,
   return summary;
 }
 
+// Low-balance reminders, sent from the Balances page to the people an admin picked. The balance comes from the
+// page (it is computed there from counts, prices and payments); the caller may see it anyway.
+async function lowBalance(caller: Caller, body: any, s: Record<string, any>) {
+  const items: { person_id: string; balance: number }[] = (body.items ?? []).filter((x: any) => x?.person_id);
+  const groupAdmin = caller.kind === "user" && caller.profile.role === "group_admin" ? caller.profile.managed_group : null;
+  if (!isAdmin(caller) && !groupAdmin) throw new HttpError(403, "Not allowed");
+  const summary = { sent: 0, skipped: [] as { person_id: string; reason: string }[] };
+  if (!items.length) return summary;
+  const ids = items.map((x) => x.person_id);
+  const [{ data: people }, { data: profiles }] = await Promise.all([
+    db.from("people").select("id, first_name, group_name, email").in("id", ids),
+    db.from("profiles").select("person_id, email").in("person_id", ids),
+  ]);
+  const eur = (x: number) => `${Number(x).toFixed(2).replace(".", ",")} €`;
+  const threshold = Number(s.balance?.low_threshold ?? -10);
+  const info = String(s.payment_info ?? "").trim();
+  const blocks = { payment_info: info ? `<p style="font-size:14px;white-space:pre-line">${escapeHtml(info)}</p>` : "" };
+  for (const { person_id, balance } of items) {
+    const p = (people ?? []).find((x) => x.id === person_id);
+    if (!p) { summary.skipped.push({ person_id, reason: "not found" }); continue; }
+    if (groupAdmin && !isAdmin(caller) && p.group_name !== groupAdmin) { summary.skipped.push({ person_id, reason: "not in your group" }); continue; }
+    const email = p.email ?? profiles?.find((x) => x.person_id === person_id)?.email;
+    if (!email) { summary.skipped.push({ person_id, reason: "no e-mail address" }); continue; }
+    try {
+      await sendMail({ to: [email], ...await compose("low_balance",
+        { first_name: p.first_name, balance: eur(balance), threshold: eur(threshold) }, blocks, s) });
+      await db.from("people").update({ low_balance_reminded_at: new Date().toISOString() }).eq("id", person_id);
+      summary.sent++;
+    } catch (e) {
+      summary.skipped.push({ person_id, reason: errMsg(e) });
+    }
+  }
+  return summary;
+}
+
 // Monday mornings (cron) or an admin: reminds everyone on duty this week.
 async function weekly(caller: Caller, s: Record<string, any>) {
   if (!isAdmin(caller)) throw new HttpError(403, "Not allowed");
@@ -388,6 +424,7 @@ Deno.serve(async (req) => {
       case "invite": return json(await invite(caller, body));
       case "weekly": return json(await weekly(caller, s));
       case "availability_reminder": return json(await availabilityReminder(caller, body, s));
+      case "low_balance": return json(await lowBalance(caller, body, s));
       case "refund_requested": return json(await refundRequested(caller, body, s));
       case "issue_reported": return json(await issueReported(caller, body, s));
       case "issue_resolved": return json(await issueResolved(caller, body, s));
