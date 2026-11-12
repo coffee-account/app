@@ -6,6 +6,19 @@ import { weeksFrom, weekLabel, mondayOf, addDays, isoWeek } from "../lib/dates.j
 import { STATUS } from "./availability.js";
 import { StatusCup, CupLegend, EmptyState, WeekCalendar } from "../lib/drawings.js";
 
+// Name or group search: every word must appear; accents don't matter.
+const fold = (x) => String(x || "").toLowerCase().replace(/ß/g, "ss").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+const searchText = (p) => fold(`${p.first_name} ${p.last_name} ${p.group_name || ""}`);
+/** People matching the search; the whole search as typed ("group c") wins over its words found anywhere. */
+function searchPeople(list, q) {
+  const words = fold(q).split(/\s+/).filter(Boolean);
+  if (!words.length) return list;
+  const phrase = words.join(" ");
+  if (words.length > 1 && list.some((p) => searchText(p).includes(phrase))) return list.filter((p) => searchText(p).includes(phrase));
+  return list.filter((p) => words.every((w) => searchText(p).includes(w)));
+}
+const SearchBox = ({ q, setQ }) => html`<input data-search placeholder="Search name or group  /" aria-label="Search name or group" value=${q} onInput=${(e) => setQ(e.target.value)} />`;
+
 const STATUS_ORDER = { available: 0, if_needed: 1, undefined: 2, unavailable: 3 };
 const statusLabel = Object.fromEntries(STATUS);
 
@@ -282,7 +295,7 @@ function AssignModal({ week, data, settings, onClose, reload }) {
 }
 
 function AvailabilityMatrix({ data, weeks, settings, reload }) {
-  const { weeksAhead, requiredFor } = availabilityRules(settings);
+  const { weeksAhead, minWeeks, requiredFor } = availabilityRules(settings);
   const [missingFirst, setMissingFirst] = useState(true);
   const [editing, setEditing] = useState(null);
   const mandatory = new Set(weeksFrom(weeksAhead));
@@ -291,19 +304,23 @@ function AvailabilityMatrix({ data, weeks, settings, reload }) {
   const map = new Map(data.availability.map((a) => [key(a.person_id, a.week_start), a]));
   for (const w of data.free.keys()) mandatory.delete(w);
   const missingCount = (p) => (p.has_account ? [...mandatory].filter((w) => !map.has(key(p.id, w))).length : 0);
-  let people = sortPeople(data.people.filter((p) => requiredFor === "all" || p.active_duty), "group");
+  const [q, setQ] = useState("");
+  let people = sortPeople(searchPeople(data.people.filter((p) => requiredFor === "all" || p.active_duty), q), "group");
   if (missingFirst) people = [...people].sort((a, b) => missingCount(b) - missingCount(a));
   const short = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" });
   return html`<div>
     <div class="toolbar">
       <${CupLegend} />
+      <${SearchBox} q=${q} setQ=${setQ} />
       <label class="check"><input type="checkbox" checked=${missingFirst} onChange=${(e) => setMissingFirst(e.target.checked)} /> Missing answers first</label>
-      <span class="count">Required: the next ${weeksAhead} weeks · ${people.length} people · click a name or week to change it</span>
+      <span class="count">${requiredFor === "all" ? "Every connected account" : "Everyone in the duty pool"} answers ${weeksAhead} week${weeksAhead === 1 ? "" : "s"} ahead
+        and is asked again once fewer than ${minWeeks} are answered · ${people.length} people · click a name or week to change it</span>
     </div>
     <div class="table-wrap"><table class="data matrix">
-      <thead><tr><th scope="col"><div class="name-cell">Name</div></th><th class="num" scope="col">Missing</th>${weeks.map((w) => html`<th class="week ${w === thisWeek ? "current" : ""}" scope="col">
+      <thead><tr><th scope="col"><div class="name-cell">Name</div></th><th class="num" scope="col" title=${`Unanswered weeks among the next ${weeksAhead}`}>Missing</th>${weeks.map((w) => html`<th class="week ${w === thisWeek ? "current" : ""}" scope="col">
         <span class="wk">W${isoWeek(w)}<small>${short.format(new Date(`${w}T00:00:00`))}</small></span></th>`)}</tr></thead>
-      <tbody>${people.map((p) => {
+      <tbody>${people.length === 0 && html`<tr><td colspan=${weeks.length + 2} class="muted">No one matches “${q}”.</td></tr>`}
+      ${people.map((p) => {
         const m = missingCount(p);
         return html`<tr>
           <td><div class="name-cell"><button class="btn-text" style="text-align:left;padding:0" title="Change their availability" onClick=${() => setEditing(p)}>${personName(p)}</button>
@@ -332,7 +349,9 @@ function Rounds({ data, app, reload }) {
   const [showAll, setShowAll] = useState(false);
   const stats = dutyStats(data.people, data.duties, round);
   const pool = data.people.filter((p) => p.active_duty);
-  const people = sortPeople(showAll ? data.people : pool, "last").sort((a, b) => stats.get(b.id).owed - stats.get(a.id).owed);
+  const [q, setQ] = useState("");
+  // A search looks through everyone, so someone outside the pool can be found and added.
+  const people = sortPeople(q.trim() ? searchPeople(data.people, q) : showAll ? data.people : pool, "last").sort((a, b) => stats.get(b.id).owed - stats.get(a.id).owed);
   const behind = pool.filter((p) => stats.get(p.id).owed > 0).length;
   const nextRound = () => run(async () => {
     await api.saveSetting("duty", { ...app.settings.duty, round: round + 1 });
@@ -351,9 +370,10 @@ function Rounds({ data, app, reload }) {
   };
   return html`<div>
     <p class="lede" style="margin-bottom:14px">Who is in the duty pool, and whether they have done their share. Tick <b>In pool</b> to add or remove
-      someone; to find people outside the pool, show them with the switch on the right. Each round, everyone in the pool does one kitchen duty;
+      someone; to find people outside the pool, search for them or show them all with the switch. Each round, everyone in the pool does one kitchen duty;
       people who joined later owe only the rounds since. Change a target where someone should do more or fewer. <b>Owed</b> = target − done − scheduled.</p>
     <div class="toolbar">
+      <${SearchBox} q=${q} setQ=${setQ} />
       <span><b>Round ${round}</b> · ${behind ? `${behind} of ${pool.length} still owe a duty` : "everyone has done their share"}</span>
       <${ConfirmAction} label=${`Start round ${round + 1}`} question=${`Start round ${round + 1}? Everyone in the pool then owes one more duty.`}
         disabled=${busy} onConfirm=${nextRound} />
@@ -362,7 +382,8 @@ function Rounds({ data, app, reload }) {
     </div>
     <div class="table-wrap"><table class="data">
       <thead><tr><th class="center">In pool</th><th>Name</th><th>Group</th><th class="num">Done</th><th class="num">Scheduled</th><th class="num">Target</th><th class="num">Owed</th></tr></thead>
-      <tbody>${people.map((p) => {
+      <tbody>${people.length === 0 && html`<tr><td colspan="7" class="muted">No one matches “${q}”.</td></tr>`}
+      ${people.map((p) => {
         const s = stats.get(p.id);
         return html`<tr key=${p.id} class=${p.active_duty ? "" : "inactive"}>
           <td class="center"><input type="checkbox" aria-label=${`${personName(p)} in the duty pool`} checked=${p.active_duty} disabled=${busy}
