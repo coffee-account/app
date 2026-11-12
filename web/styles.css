@@ -432,3 +432,9 @@ table.data tr.group-row .group-done.on { color: var(--ok); }
 .change-list { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
 .change-list li { margin: 1px 0; }
 td .avail-cell { display: inline-flex; align-items: center; gap: 6px; }
+
+/* Accounts & roles on narrow screens: the e-mail column stays put with a visible edge while the rest scrolls,
+   and the group label stays readable instead of scrolling away with its full-width row. */
+table.data.accounts td:first-child, table.data.accounts th:first-child { min-width: 190px; max-width: 220px; overflow-wrap: anywhere; box-shadow: 1px 0 0 var(--rule-soft); }
+table.data.accounts tr.group-row td:first-child { position: static; max-width: none; box-shadow: none; }
+table.data.accounts tr.group-row .group-label { position: sticky; left: 14px; }

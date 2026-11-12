@@ -51,7 +51,7 @@ function RecordPayments({ app }) {
           <thead><tr><th>Date</th><th>Person</th><th class="num">Amount</th><th>Method</th><th>Note</th><th></th></tr></thead>
           <tbody>${payments.slice(0, 300).map((p) => html`<tr>
             <td>${fmtDate(p.paid_on)}</td><td>${personName(byId.get(p.person_id))}</td>
-            <td class="num ${p.amount < 0 ? "neg" : "pos"}">${fmtEUR(p.amount)}</td><td>${p.method || ""}${p.payer && html`<div class="small muted">${p.payer}</div>`}</td><td class="muted">${p.note || ""}</td>
+            <td class="num ${p.amount < 0 ? "neg" : "pos"}">${fmtEUR(p.amount)}</td><td>${p.method || ""}${p.in_paypal && !/^paypal/i.test(p.method || "") && html`<div class="small muted">moved to PayPal</div>`}${p.payer && html`<div class="small muted">${p.payer}</div>`}</td><td class="muted">${p.note || ""}</td>
             <td class="num"><span class="row-actions"><${ConfirmAction} question="Delete payment?" disabled=${busy} onConfirm=${() => remove(p)} /></span></td></tr>`)}</tbody>
         </table></div>
         ${payments.length > 300 && html`<p class="small muted">Showing the latest 300.</p>`}`;
@@ -72,28 +72,42 @@ function PaymentForm({ people, ledger, onSaved }) {
       value: p.id, label: `${p.last_name}, ${p.first_name}`, sub: [p.group_name, !on(p) && "not on a list"].filter(Boolean).join(" · "),
     }));
   }, [people]);
+  // Cash and bank payments only reach the PayPal balance if the money was moved there: ask before recording.
+  const [asking, setAsking] = useState(null); // null | the payment waiting for the answer
+  const record = (row, inPaypal) => run(async () => {
+    await api.addPayment(inPaypal ? { ...row, in_paypal: true } : row);
+    toast(`Payment of ${fmtEUR(row.amount)} recorded${inPaypal ? " and added to the PayPal balance" : ""}`);
+    setAsking(null);
+    setF({ ...empty, paid_on: f.paid_on, method: f.method });
+    onSaved();
+  });
   return html`<form class="card payment-form" onSubmit=${(e) => {
     e.preventDefault();
-    run(async () => {
-      const amount = Number(String(f.amount).replace(",", "."));
-      if (!f.person_id) throw new Error("Choose a person");
-      if (!amount) throw new Error("Enter an amount");
-      await api.addPayment({ ...f, amount, note: f.note || null });
-      toast(`Payment of ${fmtEUR(amount)} recorded`);
-      setF({ ...empty, paid_on: f.paid_on, method: f.method });
-      onSaved();
-    });
+    const amount = Number(String(f.amount).replace(",", "."));
+    if (!f.person_id) return toast("Choose a person", "error");
+    if (!amount) return toast("Enter an amount", "error");
+    const row = { ...f, amount, note: f.note || null };
+    if (/^paypal/i.test(f.method) || f.method === "Correction") record(row, false); // PayPal: added by the database's own rule
+    else setAsking(row);
   }}>
+    ${asking && html`<div class="notice" role="alertdialog" aria-label="Moved to PayPal?" style="margin:0 0 14px">
+      <div class="row" style="gap:10px 14px">
+        <span>Has this ${asking.method.toLowerCase()} payment of <b>${fmtEUR(asking.amount)}</b> been transferred to the PayPal account?</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn small primary" disabled=${busy} onClick=${() => record(asking, true)}>Yes, add it to the PayPal balance</button>
+        <button type="button" class="btn small" disabled=${busy} onClick=${() => record(asking, false)}>No</button>
+        <button type="button" class="btn-text" onClick=${() => setAsking(null)}>Cancel</button>
+      </div></div>`}
     <div class="form-row">
       <${Field} label="Person" hint=${bal != null ? `Current balance: ${fmtEUR(bal)}` : null}>
         <${SearchSelect} options=${options} value=${f.person_id} required ariaLabel="Person" placeholder="Search name"
           onChange=${(id) => setF((x) => ({ ...x, person_id: id }))} /><//>
       <${Field} label="Date"><input type="date" required value=${f.paid_on} onInput=${set("paid_on")} /><//>
       <${Field} label="Amount (€)"><input inputmode="decimal" required value=${f.amount} onInput=${set("amount")} /><//>
-      <${Field} label="Method" hint=${/^paypal/i.test(f.method) ? "Also added to the PayPal balance." : null}><select value=${f.method} onChange=${set("method")}>
+      <${Field} label="Method" hint=${/^paypal/i.test(f.method) ? "Also added to the PayPal balance." : f.method === "Correction" ? null : "You'll be asked if it went to PayPal."}><select value=${f.method} onChange=${set("method")}>
         ${["PayPal", "Cash", "Bank transfer", "Correction"].map((m) => html`<option value=${m}>${m}</option>`)}</select><//>
       <${Field} label="Note"><input value=${f.note} onInput=${set("note")} /><//>
-      <button class="btn primary" disabled=${busy}>Record payment</button>
+      <button class="btn primary" disabled=${busy || !!asking}>Record payment</button>
     </div>
   </form>`;
 }

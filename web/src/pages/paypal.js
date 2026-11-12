@@ -192,7 +192,8 @@ function Payouts({ data, reload }) {
   const forget = (p) => deferDelete({ key: `payout:${p.id}`, message: "Payout removed from the list", commit: () => api.deletePayout(p.id), onDone: reload });
   return html`<section>
     <p class="lede" style="margin-bottom:12px">Money sent from the PayPal account. Record purchases and other payouts here; invoices and refunds
-      are marked paid on their own pages. Payouts recorded by hand come off the PayPal balance, and removing one adds it back.
+      are marked paid on their own pages. PayPal payouts recorded by hand come off the PayPal balance (cash or bank ones only if you say
+      the money came from PayPal), and removing one adds it back.
       Removing a payout doesn't change the invoice status or a member's balance; correct those on their own pages.</p>
     <${ManualPayout} reload=${reload} />
     ${list.length > 0 && html`<h2 class="section-title">Recorded payouts</h2>`}
@@ -201,7 +202,8 @@ function Payouts({ data, reload }) {
       <tbody>${list.slice(0, 200).map((p) => html`<tr key=${p.id}>
         <td>${fmtDate(p.paid_on)}</td><td>${p.recipient || "—"}</td>
         <td>${PAYOUT_LABEL[p.kind]}${p.kind === "invoice" && invoice.get(p.invoice_id) ? `: ${invoice.get(p.invoice_id).supplier}` : ""}${p.kind === "refund" && person.get(p.person_id) ? `: ${personName(person.get(p.person_id))}` : ""}
-          ${p.note && html`<div class="small muted">${p.note}</div>`}</td>
+          ${p.note && html`<div class="small muted">${p.note}</div>`}
+          ${p.method && !/^paypal/i.test(p.method) && html`<div class="small muted">${p.method}${p.in_paypal ? ", taken from PayPal" : ""}</div>`}</td>
         <td class="num">${fmtEUR(p.amount)}</td>
         <td class="num"><span class="row-actions"><${ConfirmAction} label="Remove" question="Remove this payout from the list?" actions=${[{ label: "Remove", danger: true, onClick: () => forget(p) }]} /></span></td>
       </tr>`)}</tbody>
@@ -211,29 +213,46 @@ function Payouts({ data, reload }) {
 
 /** A payout made from the PayPal account outside an import, e.g. a purchase. Invoices and refunds are marked paid on their own pages. */
 function ManualPayout({ reload }) {
-  const empty = { paid_on: isoDate(), amount: "", recipient: "", kind: "purchase", note: "" };
+  const empty = { paid_on: isoDate(), amount: "", recipient: "", kind: "purchase", method: "PayPal", note: "" };
   const [f, setF] = useState(empty);
+  const [asking, setAsking] = useState(null); // a cash or bank payout waiting for "taken from PayPal?"
   const [busy, run] = useBusy();
   const set = (k) => (e) => { const v = e.target.value; setF((x) => ({ ...x, [k]: v })); };
+  const paypal = /^paypal/i.test(f.method);
+  // PayPal payouts come off the PayPal balance (the database's rule); others only when the money came from PayPal.
+  const record = (row, fromPaypal) => run(async () => {
+    const { method, ...rest } = row;
+    await api.addPayout(/^paypal/i.test(method) ? rest : { ...rest, method, in_paypal: fromPaypal });
+    toast(`Payout of ${fmtEUR(row.amount)} recorded${/^paypal/i.test(method) || fromPaypal ? " and taken off the PayPal balance" : ""}`);
+    setAsking(null);
+    setF({ ...empty, paid_on: f.paid_on, method: f.method });
+    reload();
+  });
   return html`<form class="card payment-form" onSubmit=${(e) => {
     e.preventDefault();
-    run(async () => {
-      const amount = Math.round(Number(String(f.amount).replace(",", ".")) * 100) / 100;
-      if (!(amount > 0)) throw new Error("Enter the amount paid out");
-      await api.addPayout({ ...f, amount, recipient: f.recipient || null, note: f.note || null });
-      toast(`Payout of ${fmtEUR(amount)} recorded and taken off the PayPal balance`);
-      setF({ ...empty, paid_on: f.paid_on });
-      reload();
-    });
+    const amount = Math.round(Number(String(f.amount).replace(",", ".")) * 100) / 100;
+    if (!(amount > 0)) return toast("Enter the amount paid out", "error");
+    const row = { ...f, amount, recipient: f.recipient || null, note: f.note || null };
+    if (paypal) record(row, true); else setAsking(row);
   }}>
+    ${asking && html`<div class="notice" role="alertdialog" aria-label="Taken from PayPal?" style="margin:0 0 14px">
+      <div class="row" style="gap:10px 14px">
+        <span>Was this ${asking.method.toLowerCase()} payout of <b>${fmtEUR(asking.amount)}</b> taken from the PayPal account?</span>
+        <span class="spacer"></span>
+        <button type="button" class="btn small primary" disabled=${busy} onClick=${() => record(asking, true)}>Yes, take it off the PayPal balance</button>
+        <button type="button" class="btn small" disabled=${busy} onClick=${() => record(asking, false)}>No</button>
+        <button type="button" class="btn-text" onClick=${() => setAsking(null)}>Cancel</button>
+      </div></div>`}
     <div class="form-row">
       <${Field} label="Date"><input type="date" required value=${f.paid_on} onInput=${set("paid_on")} /><//>
       <${Field} label="Amount (€)"><input inputmode="decimal" required value=${f.amount} onInput=${set("amount")} /><//>
       <${Field} label="To"><input value=${f.recipient} onInput=${set("recipient")} /><//>
       <${Field} label="What"><select value=${f.kind} onChange=${set("kind")}>
         <option value="purchase">${PAYOUT_LABEL.purchase}</option><option value="other">${PAYOUT_LABEL.other}</option></select><//>
+      <${Field} label="Paid with" hint=${paypal ? "Taken off the PayPal balance." : "You'll be asked if it came from PayPal."}><select value=${f.method} onChange=${set("method")}>
+        ${["PayPal", "Cash", "Bank transfer"].map((m) => html`<option value=${m}>${m}</option>`)}</select><//>
       <${Field} label="Note"><input value=${f.note} onInput=${set("note")} /><//>
-      <button class="btn primary" disabled=${busy}>Record payout</button>
+      <button class="btn primary" disabled=${busy || !!asking}>Record payout</button>
     </div>
   </form>`;
 }

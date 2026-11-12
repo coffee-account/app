@@ -80,11 +80,11 @@ export function AccountsPage() {
           <input data-search placeholder="Search name, e-mail or group  /" aria-label="Search accounts" value=${q} onInput=${(e) => setQ(e.target.value)} />
           <span class="count">${shown.length === profiles.length ? `${profiles.length} accounts` : `${shown.length} of ${profiles.length} accounts`} · ${sections.length} group${sections.length === 1 ? "" : "s"}</span>
         </div>
-        <div class="table-wrap"><table class="data">
+        <div class="table-wrap"><table class="data accounts">
           <thead><tr><th>Account</th><th>Person</th><th>Role</th>
             ${!group && html`<th class="center">Upload invoices</th><th class="center">Manage kitchen duty</th><th class="center">Resolve reports</th>`}</tr></thead>
           <tbody>${shown.length === 0 && html`<tr><td colspan=${cols} class="muted">No account matches “${q}”.</td></tr>`}
-          ${sections.map(({ group: g, rows }) => [html`<tr class="group-row" key=${`g:${g}`}><td colspan=${cols}>${g} · ${rows.length}</td></tr>`, ...rows.map((p) => {
+          ${sections.map(({ group: g, rows }) => [html`<tr class="group-row" key=${`g:${g}`}><td colspan=${cols}><span class="group-label">${g} · ${rows.length}</span></td></tr>`, ...rows.map((p) => {
             const person = p.person_id && byId.get(p.person_id);
             return html`<tr key=${p.id}>
               <td>${p.email}${p.id === app.user.id && html` <span class="badge accent">you</span>`}

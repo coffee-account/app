@@ -176,11 +176,11 @@ class Query {
     }).then(resolve, reject);
   }
   match(r) { return this.filters.every((f) => f(r)); }
-  // As the database triggers do: manual PayPal payments add to the PayPal balance, manual payouts take from it.
+  // As the database triggers do: manual payments moved to PayPal add to its balance, manual payouts from PayPal take from it.
   paypalDelta(rows, sign) {
     const delta = rows.reduce((s, r) => s
-      + (this.t === "payments" && r.source === "manual" && /^paypal/i.test(r.method || "") ? Number(r.amount) : 0)
-      - (this.t === "payouts" && !r.external_id ? Number(r.amount) : 0), 0) * sign;
+      + (this.t === "payments" && r.source === "manual" && (r.in_paypal ?? /^paypal/i.test(r.method || "")) ? Number(r.amount) : 0)
+      - (this.t === "payouts" && !r.external_id && (r.in_paypal ?? /^paypal/i.test(r.method || "PayPal")) ? Number(r.amount) : 0), 0) * sign;
     const bal = this.store.db.settings.find((s) => s.key === "paypal_balance");
     if (delta && bal?.value?.amount != null) bal.value = { ...bal.value, amount: Math.round((Number(bal.value.amount) + delta) * 100) / 100, adjusted_at: new Date().toISOString() };
   }

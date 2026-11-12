@@ -57,7 +57,7 @@ Then open <http://localhost:8000>. Run it from the project folder. It serves `we
 ### 1. Supabase project
 
 1. Create a free account at <https://supabase.com>, then a new project. Choose region **Central EU (Frankfurt)** for GDPR.
-2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261117000000_duty_settings_for_managers.sql`: duty managers can change the kitchen-duty settings). Each script only needs to run once per project.
+2. Open **SQL Editor**, paste the whole of `supabase/migrations/20261021000000_init.sql`, and run it. Then do the same with every later file in `supabase/migrations/`, oldest first (the newest is `20261118000000_paypal_transfer_choice.sql`: cash and bank payments only change the PayPal balance when you say the money went to PayPal). Each script only needs to run once per project.
 3. Under **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 
 ### 2. Email sending
